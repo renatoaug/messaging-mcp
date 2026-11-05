@@ -13,4 +13,5 @@ pub mod mcp;
 pub mod plan;
 pub mod secrets;
 pub mod service;
+pub mod setup;
 pub mod store;

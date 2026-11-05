@@ -1200,11 +1200,13 @@ name = "messaging-mcp"
 version = "0.1.1"
 dependencies = [
  "async-trait",
+ "base64",
  "clap",
  "grammers-client",
  "grammers-mtsender",
  "grammers-session",
  "grammers-tl-types",
+ "qrcode",
  "reqwest",
  "rmcp",
  "rpassword",
@@ -1577,6 +1579,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "qrcode"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
+
+[[package]]
 name = "quote"
 version = "1.0.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1670,6 +1678,7 @@ dependencies = [
  "tokio-stream",
  "tokio-util",
  "tracing",
+ "url",
  "uuid",
 ]
 

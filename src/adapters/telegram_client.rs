@@ -16,7 +16,7 @@ use crate::adapters::telegram::{
     read_credentials, receipt_from, send_request,
 };
 use crate::config::{TelegramConfig, TelegramPeer};
-use crate::error::{DeliveryError, Outcome};
+use crate::error::{DeliveryError, Error, Outcome};
 use crate::identity::TELEGRAM_SESSION_ENV;
 use crate::plan::{Contact, Receipt};
 use crate::secrets::{process_env, secret_from};
@@ -33,6 +33,43 @@ pub fn single_attempt_pool(session: Arc<MemorySession>, api_id: i32) -> SenderPo
             ..Default::default()
         },
     )
+}
+
+/// Who a saved session belongs to, asked of Telegram. Refuses bots and unauthorized sessions.
+pub async fn session_user_id(
+    config: &TelegramConfig,
+    session_path: &std::path::Path,
+) -> Result<String, Error> {
+    let failed = || {
+        Error::new(
+            "TELEGRAM_SESSION_INVALID",
+            "The saved session cannot be used.",
+        )
+    };
+    let credentials = read_credentials(config, &process_env)?;
+    let session = crate::secrets::read_secret_file(session_path)?;
+    let session: StoredSession = serde_json::from_str(&session).map_err(|_| failed())?;
+    let pool = single_attempt_pool(Arc::new(session.into_memory_session()), credentials.api_id);
+    let handle = pool.handle.thin.clone();
+    let client = Client::new(pool.handle);
+    let runner = tokio::spawn(pool.runner.run());
+    let user = async {
+        if !client.is_authorized().await.map_err(|_| failed())? {
+            return Err(failed());
+        }
+        let me = client.get_me().await.map_err(|_| failed())?;
+        if me.is_bot() {
+            return Err(failed());
+        }
+        me.id()
+            .bare_id()
+            .map(|id| id.to_string())
+            .ok_or_else(failed)
+    }
+    .await;
+    handle.quit();
+    runner.abort();
+    user
 }
 
 struct GrammersTransport {

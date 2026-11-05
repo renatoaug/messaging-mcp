@@ -2,22 +2,18 @@
 
 Updated: 2026-11-05
 
-> Telegram sends as your own user through MTProto, Telegram's protocol, with `grammers`. Not a bot. **The send path is tested against fakes and the request is checked offline; the login, a real send and a real search have not run yet.** Records: [ADR-004](../decisions/ADR-004-telegram-personal-mtproto.md), [ADR-006](../decisions/ADR-006-contact-search-suggests.md).
+> Telegram sends as your own user through MTProto, Telegram's protocol, with `grammers`. Not a bot. **Tested end to end on 2026-11-05: the agent created the app, logged in by QR (twice, including a full reset), and sent two messages to Saved Messages after approval in Claude Code. Contact search has not run against a real account yet.** Records: [ADR-004](../decisions/ADR-004-telegram-personal-mtproto.md), [ADR-006](../decisions/ADR-006-contact-search-suggests.md), [ADR-007](../decisions/ADR-007-agent-runs-setup.md).
 
 ## Credentials and the session
 
-1. Get an `api_id` and `api_hash` at [my.telegram.org](https://my.telegram.org) (API development tools). Creating that application is your step.
-2. Put the hash in a 0600 file inside a 0700 folder, outside the repository. Set `telegram.apiId`, `telegram.apiHashFile` and `telegram.sessionFile` (a path that does not exist yet).
-3. When you decide to create persistent access, run it yourself in a terminal:
+1. **The app.** The assistant opens [my.telegram.org](https://my.telegram.org) in a browser it can drive. You sign in there (the code arrives in your Telegram app). It opens API development tools, creates an app ("Messaging MCP", platform Desktop), reveals the `api_hash`, calls `telegram_set_credentials` and hides the hash again. The hash goes to `telegram-api-hash` (0600) and is never returned. Telegram allows one app per account.
+2. **The login.** `telegram_login` asks Telegram for a login token (`auth.exportLoginToken`), draws it as a QR code on a page in `~/Downloads`, and waits. You scan it in Telegram → Settings → Devices → Link Desktop Device. Tokens expire in about 30 seconds; the server asks for a new one and redraws the page, and notices the scan through Telegram's `updateLoginToken`. A token from another datacenter is imported there (`auth.importLoginToken`).
+3. **A 2FA password**, if the account has one: the server saves the half-done session as `telegram-pending-session.json` (0600) and tells the agent to ask you to run `messaging-mcp telegram-password` in your terminal. You type the password hidden; it never passes through the chat.
+4. **The result**: the session file and `telegram.expectedUserId` are written, and the page turns into "You're connected". A session saved without its user ID (a reconnect at the wrong moment) is adopted on the next `telegram_login`: the server asks Telegram whose session it is instead of asking for a new scan.
 
-   ```sh
-   messaging-mcp telegram-login --config /private/path/messaging-mcp.config.json
-   ```
+`messaging-mcp telegram-login` is the terminal alternative: phone number, code and password, all hidden. It never creates an account, never prints the session and never overwrites an existing file. Both logins refuse bots and refuse a different user than `expectedUserId`.
 
-   It explains what it creates, asks for `CREATE SESSION`, then for your phone number, the login code and your 2FA password, all hidden. It never creates a new account, never sends a message, never prints the session and never overwrites an existing file. It refuses bots, and refuses a different user when `expectedUserId` is already set.
-4. Set `telegram.expectedUserId` to the ID it prints.
-
-The session file is JSON: the home datacenter and the authorization keys, the secret material Telegram uses to recognize this device. Anyone with it can act as you: revoke it under Telegram → Settings → Devices if it leaks. Do not repeat logins blindly when one fails: Telegram limits them.
+The session file is JSON: the home datacenter and the authorization keys, the secret material Telegram uses to recognize this device. Anyone with it can act as you: revoke it under Telegram → Settings → Devices if it leaks. To log in again, end the "Messaging MCP" device there, delete the session file and remove `expectedUserId`. Do not repeat logins blindly when one fails: Telegram limits them.
 
 ## Targets
 
@@ -57,10 +53,12 @@ They drop yourself, deleted accounts, bots, and peers without a full access hash
 messaging-mcp allow telegram "Maria" --id maria
 ```
 
-It lists the results, asks which one, shows what will be stored and asks for `ALLOW maria`. `messaging-mcp revoke maria` removes it; plans prepared for it stop being sendable.
+From the assistant, `allow_recipient` with the result's `reference` (`user:42`) does the same, only when you asked to message that person; each live message still needs your yes. In a terminal, `allow telegram` lists the results, asks which one, shows what will be stored and asks for `ALLOW maria`. `revoke_recipient` or `messaging-mcp revoke maria` removes it; plans prepared for it stop being sendable.
 
 ## Still open
 
-- [ ] Run `telegram-login`, a send to Saved Messages and a search against a real account.
+- [x] A QR login and a send to Saved Messages against a real account → done on 2026-11-05.
+- [ ] A contact search against a real account.
+- [ ] `telegram-login` (phone code) and `telegram-password` against a real account.
 - [ ] Tell Telegram's definite rejections (for example `PEER_ID_INVALID`) apart from uncertain errors, so they become `failed`.
 - [ ] Datacenter migration during a send is not handled: a session whose home datacenter moved fails as uncertain.

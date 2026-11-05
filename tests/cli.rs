@@ -21,6 +21,9 @@ struct Fixture {
 
 fn fixture() -> Fixture {
     let dir = tempfile::tempdir().unwrap();
+    // The config folder must be owner-only, as a real one is.
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
     let config = dir.path().join("config.json");
     let input = json!({
         "mode": "dry-run",
@@ -115,19 +118,24 @@ async fn an_mcp_client_lists_only_safe_tools_and_persists_both_dry_run_channels(
     assert_eq!(
         names,
         [
+            "allow_recipient",
             "get_message_status",
             "get_status",
             "list_recipients",
             "prepare_message",
+            "revoke_recipient",
             "search_contacts",
-            "send_message"
+            "send_message",
+            "set_mode",
+            "setup_status",
+            "telegram_login",
+            "telegram_set_credentials",
+            "whatsapp_setup",
+            "whatsapp_status",
+            "whatsapp_stop",
         ]
     );
-    assert!(
-        names
-            .iter()
-            .all(|name| !name.contains("approve") && !name.contains("allow"))
-    );
+    assert!(names.iter().all(|name| !name.contains("approve")));
 
     let call = |name: &'static str, arguments: Value| {
         let client = &client;
@@ -162,6 +170,71 @@ async fn an_mcp_client_lists_only_safe_tools_and_persists_both_dry_run_channels(
         .unwrap();
     assert_eq!(search.is_error, Some(true));
 
+    // Setup through MCP: the agent allows a recipient and changes the mode, and the server
+    // reloads the config without a restart. A live plan still needs terminal approval.
+    let setup = call("setup_status", json!({})).await;
+    assert_eq!(setup["liveSendsRequireTerminalApproval"], true);
+    let allowed = call(
+        "allow_recipient",
+        json!({ "id": "ana", "label": "Ana", "whatsappJid": "5511977776666@s.whatsapp.net" }),
+    )
+    .await;
+    assert_eq!(allowed["allowed"], "ana");
+    let unknown = client
+        .call_tool(
+            CallToolRequestParams::new("allow_recipient").with_arguments(
+                json!({ "id": "bob", "telegramReference": "user:1" })
+                    .as_object()
+                    .cloned()
+                    .unwrap(),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unknown.is_error, Some(true));
+    assert_eq!(
+        call("set_mode", json!({ "mode": "live" })).await["mode"],
+        "live"
+    );
+    assert_eq!(call("get_status", json!({})).await["mode"], "live");
+    // Live with no logged-in account: nothing can even be prepared.
+    let blocked = client
+        .call_tool(
+            CallToolRequestParams::new("prepare_message").with_arguments(
+                json!({ "recipientId": "tg-fixture", "text": "x", "idempotencyKey": "live_check_1" })
+                    .as_object()
+                    .cloned()
+                    .unwrap(),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(blocked.is_error, Some(true));
+    let blocked_text = &blocked.content[0].as_text().unwrap().text;
+    assert!(blocked_text.contains("SENDER_UNCONFIGURED"));
+    assert_eq!(
+        call("set_mode", json!({ "mode": "dry-run" })).await["mode"],
+        "dry-run"
+    );
+    assert_eq!(
+        call("revoke_recipient", json!({ "recipientId": "ana" })).await["revoked"],
+        "ana"
+    );
+    let saved = call(
+        "telegram_set_credentials",
+        json!({ "apiId": 12345, "apiHash": "0123456789abcdef0123456789abcdef" }),
+    )
+    .await;
+    assert_eq!(saved, json!({ "saved": true }));
+    let setup = call("setup_status", json!({})).await;
+    assert_eq!(setup["telegram"]["credentials"], true);
+    assert!(!setup.to_string().contains("0123456789abcdef"));
+    assert_eq!(
+        call("whatsapp_status", json!({})).await["status"],
+        "not_running"
+    );
+    assert_eq!(call("whatsapp_stop", json!({})).await["stopped"], false);
+
     let mut completed = Vec::new();
     for recipient_id in ["wa-fixture", "tg-fixture"] {
         let args = json!({
@@ -177,10 +250,12 @@ async fn an_mcp_client_lists_only_safe_tools_and_persists_both_dry_run_channels(
         assert_eq!(plan["text"], args["text"]);
         assert_eq!(call("prepare_message", args).await["id"], plan["id"]);
         let id = json!({ "planId": plan["id"] });
-        let sent = call("send_message", id.clone()).await;
+        let send =
+            json!({ "planId": plan["id"], "recipientId": recipient_id, "text": plan["text"] });
+        let sent = call("send_message", send.clone()).await;
         assert_eq!(sent["status"], "simulated");
         assert_eq!(sent.get("receipt"), None);
-        assert_eq!(call("send_message", id.clone()).await, sent);
+        assert_eq!(call("send_message", send).await, sent);
         assert_eq!(call("get_message_status", id).await, sent);
         completed.push(sent);
     }
@@ -270,9 +345,32 @@ fn approval_and_allow_refuse_a_pipe_and_change_nothing() {
         "Ana",
     ];
     assert_eq!(structured_error(&f.run(&allow))["code"], "TTY_REQUIRED");
-    assert_eq!(
-        structured_error(&f.run(&["telegram-login"]))["code"],
-        "TTY_REQUIRED"
-    );
+    for command in ["telegram-login", "telegram-password"] {
+        assert_eq!(structured_error(&f.run(&[command]))["code"], "TTY_REQUIRED");
+    }
     assert_eq!(f.json(&["recipients"]).as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn without_a_config_flag_a_private_dry_run_config_is_created_in_the_home_folder() {
+    let home = tempfile::tempdir().unwrap();
+    let mut command = Command::new(BINARY);
+    isolated(&mut command, home.path());
+    let output = command
+        .arg("doctor")
+        .current_dir(home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let status: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(status["mode"], "dry-run");
+    let config = home
+        .path()
+        .join(".config/messaging-mcp/messaging-mcp.config.json");
+    use std::os::unix::fs::MetadataExt;
+    assert_eq!(std::fs::metadata(&config).unwrap().mode() & 0o777, 0o600);
 }

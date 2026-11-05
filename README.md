@@ -1,6 +1,6 @@
 # Messaging MCP
 
-Claude Code, Codex and other MCP clients send messages through **your personal WhatsApp and Telegram accounts**, with you approving every real message in your own terminal. MCP (Model Context Protocol) is how these assistants call outside tools. Messaging MCP is one local binary: an MCP server over stdio and a CLI, both on the same core and the same local ledger.
+Claude Code, Codex and other MCP clients send messages through **your personal WhatsApp and Telegram accounts**, and you approve every real message before it leaves. MCP (Model Context Protocol) is how these assistants call outside tools. Messaging MCP is one local binary: an MCP server over stdio and a CLI, both on the same core and the same local ledger. The assistant also sets it up: you scan a QR code and say yes.
 
 <p align="center">
   <a href="#running">📚 Get started</a> ·
@@ -10,51 +10,57 @@ Claude Code, Codex and other MCP clients send messages through **your personal W
   <a href="docs/decisions/">🧭 Decisions</a>
 </p>
 
-**State:** the whole flow runs and is tested offline, in dry-run (the default, where nothing reaches an account). **No real account has been connected yet**: the first live send, the Telegram login and the contact search against Telegram are still to be tried by hand ([docs/design/06-testing.md](docs/design/06-testing.md#the-first-live-test)).
+**State:** Telegram works end to end with a real account (tested on 2026-11-05: QR login by the agent, approval in Claude Code's prompt, two messages delivered to Saved Messages). WhatsApp is built and tested offline only; its first live pairing is still to be done ([docs/design/06-testing.md](docs/design/06-testing.md)).
 
 ## What it does
 
-- **Sends plain text** to recipients you allowed, on WhatsApp (through a separate bridge program) and Telegram (as your own user, not a bot).
-- **Plans before sending**: an assistant prepares an exact message; in live mode you approve it with `messaging-mcp approve` in a terminal; only then can it be sent, and never twice.
-- **Searches your Telegram contacts and chats** so you can allow a new recipient with `messaging-mcp allow telegram "Maria"`. The search only suggests; adding is yours.
-- **Does not**: read messages, search WhatsApp contacts (the bridge offers no way to), send media, log in on its own, start the WhatsApp bridge, or retry a send whose outcome is uncertain.
+- **Sends plain text** to recipients you allowed, on Telegram (as your own user, not a bot) and on WhatsApp (through a separate bridge program the assistant builds and starts).
+- **Asks you first, every time.** The assistant prepares an exact message and shows it; your client then asks you to approve that destination and that text. Nothing leaves without your yes, and the yes never comes from the model.
+- **Sets itself up from the conversation**: the assistant creates the Telegram app, shows you QR codes to scan, builds the WhatsApp bridge and allows recipients when you ask to message someone.
+- **Searches your Telegram contacts and chats** to find the person you mean. Search only suggests.
+- **Does not** read messages, search WhatsApp contacts (the bridge offers no way to), send media or formatting, or retry a send whose outcome is uncertain.
 
 ## Stack
 
-Rust, one binary. MCP through the official Rust SDK (`rmcp`), Telegram through MTProto with `grammers`, WhatsApp through an external Go bridge over loopback HTTP, the ledger in SQLite. Why Rust: [ADR-001](docs/decisions/ADR-001-rust-single-binary.md).
+Rust, one binary. MCP through the official Rust SDK (`rmcp`), Telegram through MTProto with `grammers`, WhatsApp through an external Go bridge over loopback HTTP, the ledger in SQLite. Why Rust: [ADR-001](docs/decisions/ADR-001-rust-single-binary.md). Why the assistant runs the setup: [ADR-007](docs/decisions/ADR-007-agent-runs-setup.md).
 
 ## Requirements
 
-- [Rust](https://rustup.rs) stable, installed with `rustup` (the repository's `rust-toolchain.toml` picks the version). Only to build; a release binary needs nothing.
 - macOS or Linux. Windows is not supported.
-- For WhatsApp: [Go](https://go.dev) to build the bridge, which runs separately ([docs/design/04-whatsapp.md](docs/design/04-whatsapp.md)).
-- For Telegram: an `api_id` and `api_hash` from [my.telegram.org](https://my.telegram.org) ([docs/design/03-telegram.md](docs/design/03-telegram.md)).
+- A release binary, or [Rust](https://rustup.rs) stable to build one.
+- For WhatsApp: `git`, [Go](https://go.dev) and a C compiler (Xcode command line tools on macOS). The assistant builds the bridge with them.
+- To let the assistant create the Telegram app itself: a browser it can drive, such as the Claude in Chrome extension.
 
 ## Running
 
-Try it with no account at all:
+Build and try it with no account at all:
 
 ```sh
 cargo build --release
 cargo run --example demo
-./target/release/messaging-mcp doctor --config examples/messaging-mcp.config.json
-./target/release/messaging-mcp prepare --config examples/messaging-mcp.config.json --recipient tg-self --text 'Hello, local test.' --key demo_intent_001
 ```
 
-`prepare` prints a plan with an `id`. Send it with `messaging-mcp send <id> --config examples/messaging-mcp.config.json`: the result is `simulated`, not `sent`.
+The demo prepares and simulates one message per channel: `simulated`, not `sent`.
 
-Connecting real accounts, every setting and how to register the server in Claude Code and Codex: [docs/design/02-setup.md](docs/design/02-setup.md).
+Then install the binary and register it in your clients. It creates its config in `~/.config/messaging-mcp/` on first use:
+
+```sh
+install -m 755 target/release/messaging-mcp ~/.local/bin/messaging-mcp
+claude mcp add --scope user messaging-mcp -- ~/.local/bin/messaging-mcp mcp
+codex mcp add messaging-mcp -- ~/.local/bin/messaging-mcp mcp
+```
+
+Open a new session and ask: *"set up messaging-mcp and send me a hi on Telegram"*. The assistant follows `setup_status`. Before the first real message, turn on approval in your client: [docs/design/02-setup.md](docs/design/02-setup.md#approving-messages).
 
 ## Use it from your assistant
 
-Register the binary as a stdio MCP server, with `MESSAGING_MCP_CONFIG` pointing to your config file:
+| You say | The assistant |
+|---|---|
+| "Set up messaging-mcp" | Creates the Telegram app, shows the QR code, builds and pairs WhatsApp |
+| "Send Maria: I'll be 10 minutes late" | Finds Maria, allows her, prepares the message, shows it, and sends after your yes |
+| "Switch to dry-run" | Stops reaching any account |
 
-```sh
-claude mcp add --scope local --env MESSAGING_MCP_CONFIG=/absolute/path/messaging-mcp.config.json --transport stdio messaging-mcp -- /absolute/path/messaging-mcp mcp
-codex mcp add messaging-mcp --env MESSAGING_MCP_CONFIG=/absolute/path/messaging-mcp.config.json -- /absolute/path/messaging-mcp mcp
-```
-
-The tools are `get_status`, `list_recipients`, `search_contacts`, `prepare_message`, `get_message_status` and `send_message`. There is no tool to log in, approve or allow: those stay in your terminal. Details and permissions: [docs/design/02-setup.md](docs/design/02-setup.md#claude-code-and-codex).
+The tools: `setup_status`, `telegram_set_credentials`, `telegram_login`, `whatsapp_setup`, `whatsapp_status`, `whatsapp_stop`, `set_mode`, `search_contacts`, `allow_recipient`, `revoke_recipient`, `list_recipients`, `prepare_message`, `send_message`, `get_message_status`, `get_status`. There is no tool that approves a message.
 
 ## Test
 
@@ -67,7 +73,7 @@ The tests never reach a network beyond loopback, never read your real config or 
 
 ## Releases
 
-Every merge to `main` is a release: [semantic-release](https://semantic-release.gitbook.io) reads the Conventional Commit titles since the last tag, bumps the version in `Cargo.toml` (a `feat` bumps the minor, anything else the patch), writes `CHANGELOG.md`, tags `vX.Y.Z` and publishes the GitHub release with binaries for macOS and Linux. This pipeline is written but has not run yet.
+Every merge to `main` is a release: [semantic-release](https://semantic-release.gitbook.io) reads the Conventional Commit titles since the last tag, bumps the version in `Cargo.toml` (a `feat` bumps the minor, anything else the patch), writes `CHANGELOG.md`, tags `vX.Y.Z` and publishes the GitHub release with binaries for macOS and Linux.
 
 ## Docs
 
@@ -75,4 +81,4 @@ Everything about how Messaging MCP works, runs and was decided is indexed in [`d
 
 ## License
 
-[MIT](LICENSE). The WhatsApp bridge is a separate project under its own license; nothing from it is copied here.
+[MIT](LICENSE). Unofficial: not affiliated with WhatsApp or Telegram. The WhatsApp bridge is a separate project under its own license; nothing from it is copied here.

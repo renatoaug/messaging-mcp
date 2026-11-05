@@ -1,6 +1,6 @@
 # ADR-003: Approving, allowing and logging in happen only in a terminal
 
-- **Status**: Accepted
+- **Status**: Superseded by [ADR-007](ADR-007-agent-runs-setup.md)
 - **Date**: 2026-11-05
 - **Related**: [SECURITY.md](../../SECURITY.md), [ADR-006](ADR-006-contact-search-suggests.md)
 

@@ -1,4 +1,3 @@
-use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -7,9 +6,10 @@ use url::Url;
 
 use crate::error::Error;
 use crate::plan::{Channel, Mode};
+use crate::secrets::{Env, process_env};
 
 pub const CONFIG_ENV: &str = "MESSAGING_MCP_CONFIG";
-const DEFAULT_CONFIG_FILE: &str = "messaging-mcp.config.json";
+pub const CONFIG_FILE_NAME: &str = "messaging-mcp.config.json";
 const MAX_RECIPIENTS: usize = 1000;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -163,6 +163,19 @@ fn default_plan_ttl() -> i64 {
     600
 }
 
+/// Who approves a live message when the MCP client cannot show an approval dialog.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Approval {
+    /// Only `messaging-mcp approve` in a terminal.
+    #[default]
+    Terminal,
+    /// The client's own permission prompt for `send_message`, which shows the destination and
+    /// the whole message because the call has to repeat them. The owner must keep that prompt
+    /// on (an "ask" rule); an "always allow" turns it off.
+    ClientPrompt,
+}
+
 fn default_max_sends() -> i64 {
     6
 }
@@ -212,6 +225,9 @@ pub struct Config {
     pub plan_ttl_seconds: i64,
     #[serde(default = "default_max_sends")]
     pub max_sends_per_minute: i64,
+    /// Who approves a live message when the client has no approval dialog.
+    #[serde(default)]
+    pub approval: Approval,
     #[serde(default)]
     pub recipients: Vec<Recipient>,
     pub whatsapp: Option<WhatsAppConfig>,
@@ -355,20 +371,47 @@ pub fn parse_config(input: &str, base_dir: &Path) -> Result<Config, Error> {
     Ok(config)
 }
 
-/// Loads the config from `path`, then `MESSAGING_MCP_CONFIG`, then the current directory.
+/// Where the config lives without `--config` or `MESSAGING_MCP_CONFIG`:
+/// `$XDG_CONFIG_HOME/messaging-mcp/`, else `~/.config/messaging-mcp/`.
+pub fn default_config_dir(env: Env<'_>) -> Option<PathBuf> {
+    env("XDG_CONFIG_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            env("HOME")
+                .filter(|home| !home.is_empty())
+                .map(|home| Path::new(&home).join(".config"))
+        })
+        .map(|base| base.join("messaging-mcp"))
+}
+
+/// The config file in use: `path`, then `MESSAGING_MCP_CONFIG`, then the default location.
+pub fn resolve_config_path(path: Option<&Path>, env: Env<'_>) -> Result<PathBuf, Error> {
+    if let Some(path) = path {
+        return Ok(path.to_path_buf());
+    }
+    if let Some(path) = env(CONFIG_ENV).filter(|value| !value.is_empty()) {
+        return Ok(PathBuf::from(path));
+    }
+    default_config_dir(env)
+        .map(|dir| dir.join(CONFIG_FILE_NAME))
+        .ok_or_else(|| Error::new("CONFIG_READ_FAILED", format!("Set {CONFIG_ENV} or HOME.")))
+}
+
+/// Loads a config file.
 pub fn load_config(path: Option<&Path>) -> Result<Config, Error> {
-    let path = path
-        .map(Path::to_path_buf)
-        .or_else(|| env::var_os(CONFIG_ENV).map(PathBuf::from))
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_CONFIG_FILE));
+    load_config_from(&resolve_config_path(path, &process_env)?)
+}
+
+pub fn load_config_from(path: &Path) -> Result<Config, Error> {
     let read_error = || {
         Error::new(
             "CONFIG_READ_FAILED",
             format!("Cannot read the configuration. Set {CONFIG_ENV} to the config file path."),
         )
     };
-    let input = fs::read_to_string(&path).map_err(|_| read_error())?;
-    let absolute_path = std::path::absolute(&path).map_err(|_| read_error())?;
+    let input = fs::read_to_string(path).map_err(|_| read_error())?;
+    let absolute_path = std::path::absolute(path).map_err(|_| read_error())?;
     let base_dir = absolute_path.parent().ok_or_else(read_error)?;
     parse_config(&input, base_dir)
 }

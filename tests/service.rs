@@ -462,3 +462,20 @@ async fn allowed_recipients_are_shared_and_revoking_one_blocks_its_plans() {
         "RECIPIENT_IN_CONFIG"
     );
 }
+
+#[test]
+fn the_approval_dialog_shows_sender_destination_and_the_whole_message() {
+    let f = fixture(json!({}), Adapters::default());
+    let text = "Linha 1\nLinha 2 com **asteriscos** e emoji 👋";
+    let plan = f
+        .service
+        .prepare(&PrepareInput {
+            text: text.to_string(),
+            ..draft(KEY)
+        })
+        .unwrap();
+    let prompt = messaging_mcp::mcp::approval_prompt(&plan);
+    assert!(prompt.contains(text));
+    assert!(prompt.contains(&plan.sender));
+    assert!(prompt.contains(&plan.recipient_label) && prompt.contains(&plan.target));
+}

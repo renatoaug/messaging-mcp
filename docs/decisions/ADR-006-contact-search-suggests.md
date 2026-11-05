@@ -1,6 +1,6 @@
 # ADR-006: Contact search suggests; only the owner adds a recipient
 
-- **Status**: Accepted
+- **Status**: Partly superseded by [ADR-007](ADR-007-agent-runs-setup.md): the agent can now allow a recipient
 - **Date**: 2026-11-05
 - **Related**: [design/03-telegram.md](../design/03-telegram.md#finding-and-allowing-people), [ADR-003](ADR-003-human-steps-outside-mcp.md)
 

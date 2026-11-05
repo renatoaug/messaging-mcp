@@ -6,8 +6,9 @@ Messaging MCP can send messages as you. Message content, web pages, contact name
 
 - **Dry-run by default.** No account connection is opened.
 - **No listener of its own.** MCP runs over stdio. The WhatsApp bridge is reached only at a literal loopback address (`127.0.0.1` or `[::1]`) with a port and the `/api` path; redirects and environment proxies are refused.
-- **An allowlist of recipients**, from the config file or added with `messaging-mcp allow` after you review them in a terminal. No wildcards, no matching by display name, no automatic expansion.
-- **Approval outside MCP.** Each live plan is approved with `messaging-mcp approve` in an interactive terminal, showing the sender, destination and full text. Approvals expire with the plan (10 minutes by default).
+- **An allowlist of recipients**, from the config file, added by the agent with `allow_recipient` when you ask to message someone, or added with `messaging-mcp allow` in a terminal. No wildcards, no matching by display name, no automatic expansion.
+- **Your yes before every live message, and never the model's.** `send_message` has to repeat the recipient and the whole text, and the server refuses a mismatch. The yes comes from your MCP client's approval dialog when it has one; otherwise, with `"approval": "client-prompt"`, from the client's permission prompt for that call, which shows the destination and the text; otherwise from `messaging-mcp approve` in a terminal (the default). Approvals expire with the plan (10 minutes by default). See [ADR-007](docs/decisions/ADR-007-agent-runs-setup.md).
+- **Setup by the agent, with your phone and passwords kept out of the chat.** You scan QR codes on your phone and type a Telegram 2FA password in a terminal (`messaging-mcp telegram-password`). The Telegram API hash goes straight to a private file and is never returned. Config writes are validated and atomic, in a 0700 folder.
 - **Plans are bound to their context.** A fingerprint covers the mode, the recipient, the text and the sender's credentials, without exposing them. Changing any of them invalidates the plan. Telegram also checks the logged-in user at every send.
 - **At most one attempt per plan.** The ledger records `sending` in a committed transaction (SQLite, `BEGIN IMMEDIATE`, WAL, `synchronous=FULL`) before the adapter runs. No automatic retries anywhere; Telegram uses a stable `random_id` and a sender pool with retries disabled.
 - **Telegram sends literal text**: no entities, no link preview, never paid messages or paid flood skips.
@@ -16,20 +17,22 @@ Messaging MCP can send messages as you. Message content, web pages, contact name
 
 ## Important limits
 
-1. **A terminal check does not tell a person from an agent with a shell.** A process running as your user can also edit the config, the ledger and the code, read secrets and call the providers directly. Do not give an untrusted agent unrestricted access to the machine. Strong isolation needs a separate user or service that holds the credentials, with approval out of the agent's reach. This version does not build that.
-2. **The WhatsApp bridge reports neither the account nor a message ID.** `accountLabel` is something you verify. If you pair another account, generate a new bridge token. Never reuse a token across accounts.
-3. **The Telegram session file is full access to your account.** Do not copy it between machines. This project registers no update handlers and exposes no reading, but that does not reduce what the credential can do.
-4. **The WhatsApp bridge is unofficial.** It uses WhatsApp Web through `whatsmeow` and can stop working or lead to restrictions. Its own session and history live outside our ledger. Turn off its webhooks and media download ([docs/design/04-whatsapp.md](docs/design/04-whatsapp.md)).
-5. **Pending messages are stored in clear text** in the private ledger. File permissions are not encryption. Keep the state directory on a protected volume, out of synced folders and shared backups. Nothing deletes old plans yet.
-6. **Accepted is not delivered.** Even after a timeout the provider may finish the send. There is no exactly-once delivery across the network.
-7. **The rate limit is local** to a state directory. It does not replace the services' own rules. Do not use this for bulk messages, contact harvesting or to get around blocks.
-8. **Config changes need a restart** of each MCP process. Recipients added with `allow` take effect immediately.
+1. **`client-prompt` approval is only as strong as your client's prompt.** In Claude Code, keep `"ask": ["mcp__messaging-mcp__send_message"]` in your settings, and never choose "always allow" on that prompt. An auto-approving mode or an "always allow" lets the agent send without asking you. Codex: keep `default_tools_approval_mode = "prompt"` for this server.
+2. **A terminal check does not tell a person from an agent with a shell.** A process running as your user can also edit the config, the ledger and the code, read secrets and call the providers directly. Do not give an untrusted agent unrestricted access to the machine. Strong isolation needs a separate user or service that holds the credentials, with approval out of the agent's reach. This version does not build that.
+3. **The WhatsApp bridge reports no message ID.** `whatsapp_setup` reads the paired number from the bridge's own device table and sets `accountLabel` from it. If you pair another account, generate a new bridge token. Never reuse a token across accounts.
+4. **The Telegram session file is full access to your account.** Do not copy it between machines. This project registers no update handlers and exposes no reading, but that does not reduce what the credential can do.
+5. **The WhatsApp bridge is unofficial.** It uses WhatsApp Web through `whatsmeow` and can stop working or lead to restrictions. It stores your session and message history in `~/.config/messaging-mcp/whatsapp-bridge/run/store/`, outside our ledger, and its output, which may include message contents, in `bridge.log` (owner-only, capped at 1 MB). `whatsapp_setup` turns off its webhooks and media download.
+6. **QR pages are written to `~/Downloads`** while you scan. Each turns into a result page when the login ends. A login QR is only useful to the device that created it, but delete the pages if you share that folder.
+7. **Pending messages are stored in clear text** in the private ledger. File permissions are not encryption. Keep the state directory on a protected volume, out of synced folders and shared backups. Nothing deletes old plans yet.
+8. **Accepted is not delivered.** Even after a timeout the provider may finish the send. There is no exactly-once delivery across the network.
+9. **The rate limit is local** to a state directory. It does not replace the services' own rules. Do not use this for bulk messages, contact harvesting or to get around blocks.
+10. **Config edits made by hand need a reconnect** of each MCP process (`/mcp` in Claude Code). Changes made through the setup tools and recipients added with `allow` take effect immediately.
 
 ## Secrets
 
 Use regular files owned by you, mode 0600, inside a 0700 directory, outside the checkout. Linked secret files are refused. Never put the bridge token, the API hash, the session file, bridge databases, login codes, passwords or `.env` files in Git, attachments, logs or chats with agents.
 
-Environment variables are supported, but other processes of the same user and some diagnostic tools can see them. Never put secrets on a command line or in MCP client configs. `messaging-mcp telegram-login` never prints the session and never overwrites an existing file.
+Environment variables are supported, but other processes of the same user and some diagnostic tools can see them. Never put secrets on a command line or in MCP client configs. The Telegram logins never print the session; `messaging-mcp telegram-login` never overwrites an existing file.
 
 ## Recovery
 

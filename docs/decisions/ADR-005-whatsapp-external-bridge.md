@@ -1,6 +1,6 @@
 # ADR-005: WhatsApp through one external bridge the owner runs
 
-- **Status**: Accepted
+- **Status**: Partly superseded by [ADR-007](ADR-007-agent-runs-setup.md): the agent now builds and starts the bridge
 - **Date**: 2026-11-05
 - **Related**: [design/04-whatsapp.md](../design/04-whatsapp.md)
 

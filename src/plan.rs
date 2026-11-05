@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 use crate::config::{Recipient, TelegramPeer};
 use crate::error::{DeliveryError, Error};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum Mode {
     #[default]

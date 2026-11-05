@@ -1,31 +1,30 @@
-//! Manual session setup. Deliberately outside MCP: a person runs it after deciding to create
-//! persistent account access.
+//! Telegram login steps that need a person at a terminal: the phone-code login
+//! (`telegram-login`, an alternative to the agent's QR login) and the 2FA password that finishes
+//! a QR login (`telegram-password`). The password is typed hidden and never passes through an
+//! agent.
 
-use std::fs::{DirBuilder, OpenOptions};
 use std::io::{IsTerminal, Write, stdin, stdout};
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::Path;
 use std::sync::Arc;
 
+use grammers_client::client::PasswordToken;
 use grammers_client::{Client, SignInError};
-use grammers_session::Session;
 use grammers_session::storages::MemorySession;
-use rustix::fs::OFlags;
+use grammers_tl_types as tl;
+use serde_json::json;
 
-use crate::adapters::telegram::{StoredSession, read_credentials};
+use crate::adapters::telegram::{StoredSession, read_credentials, write_session};
 use crate::adapters::telegram_client::single_attempt_pool;
-use crate::config::Config;
+use crate::config::{Config, TelegramConfig};
 use crate::error::Error;
-use crate::secrets::{is_owner_only, process_env};
+use crate::secrets::{process_env, read_secret_file};
+use crate::setup::config_file::{ensure_private_dir, section, update_config};
 
 const INTRODUCTION: &str = "This creates and saves persistent access to your PERSONAL Telegram \
 account.\nThe session can read and send as you; keep it private and revoke it in Telegram \
 Settings > Devices when no longer needed.\nThe login is subject to the Telegram API terms: \
 https://core.telegram.org/api/terms\nNo messages will be sent. No new Telegram account will be \
 created.";
-
-/// The known datacenters. Their authorization keys are what the session file preserves.
-const DATACENTERS: std::ops::RangeInclusive<i32> = 1..=5;
 
 fn setup_error(message: &str) -> Error {
     Error::new("TELEGRAM_LOGIN_FAILED", message)
@@ -36,6 +35,17 @@ fn failed() -> Error {
         "Setup failed. No secrets are displayed. Review your Telegram Devices before attempting \
          a new session.",
     )
+}
+
+fn require_terminal() -> Result<(), Error> {
+    if stdin().is_terminal() && stdout().is_terminal() {
+        Ok(())
+    } else {
+        Err(Error::new(
+            "TTY_REQUIRED",
+            "Run this yourself in an interactive local terminal.",
+        ))
+    }
 }
 
 fn ask(prompt: &str) -> Result<String, Error> {
@@ -50,44 +60,48 @@ fn ask_hidden(prompt: &str) -> Result<String, Error> {
     rpassword::prompt_password(prompt).map_err(|_| failed())
 }
 
-fn prepare_directory(session_file: &Path) -> Result<(), Error> {
-    let message = "Session directory must be an owner-only, non-symlink directory (0700).";
-    let directory = session_file.parent().ok_or_else(|| setup_error(message))?;
-    DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(directory)
-        .map_err(|_| setup_error(message))?;
-    let metadata = directory
-        .symlink_metadata()
-        .map_err(|_| setup_error(message))?;
-    if !metadata.is_dir() || !is_owner_only(&metadata) {
-        return Err(setup_error(message));
-    }
-    Ok(())
+fn settings(config: &Config) -> Result<&TelegramConfig, Error> {
+    config
+        .telegram
+        .as_ref()
+        .ok_or_else(|| setup_error("Configure the telegram section first."))
 }
 
-fn save_session(session: &MemorySession, path: &Path) -> Result<(), Error> {
-    let dc_options = DATACENTERS
-        .filter_map(|id| session.dc_option(id).ok().flatten())
-        .filter(|option| option.auth_key.is_some())
-        .collect();
-    let home_dc = session.home_dc_id().map_err(|_| failed())?;
-    let stored = StoredSession {
-        home_dc,
-        dc_options,
-    };
-    let json = serde_json::to_string(&stored).map_err(|_| failed())?;
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .custom_flags(OFlags::NOFOLLOW.bits() as i32)
-        .open(path)
-        .map_err(|_| failed())?;
-    file.write_all(json.as_bytes()).map_err(|_| failed())?;
-    file.write_all(b"\n").map_err(|_| failed())?;
-    file.sync_all().map_err(|_| failed())
+fn session_file(settings: &TelegramConfig) -> Result<&Path, Error> {
+    settings
+        .session_file
+        .as_deref()
+        .ok_or_else(|| setup_error("Set telegram.sessionFile to a private path outside Git."))
+}
+
+/// Refuses bots and a different user than the one already expected, then records the user.
+fn accept_user(
+    user: &grammers_client::peer::User,
+    settings: &TelegramConfig,
+    session: &MemorySession,
+    config_path: &Path,
+) -> Result<String, Error> {
+    if user.is_bot() {
+        return Err(setup_error("Bot sessions are not supported."));
+    }
+    let id = user.id().bare_id().ok_or_else(failed)?.to_string();
+    if settings
+        .expected_user_id
+        .as_deref()
+        .is_some_and(|expected| expected != id)
+    {
+        return Err(setup_error(
+            "The logged-in account differs from expectedUserId. No session saved; review and \
+             revoke this new session in Telegram Settings > Devices.",
+        ));
+    }
+    let session_path = session_file(settings)?;
+    write_session(session, session_path)?;
+    update_config(config_path, |config| {
+        let telegram = section(config, "telegram");
+        telegram.insert("expectedUserId".into(), json!(id));
+    })?;
+    Ok(id)
 }
 
 async fn sign_in(client: &Client, api_hash: &str) -> Result<grammers_client::peer::User, Error> {
@@ -103,34 +117,30 @@ async fn sign_in(client: &Client, api_hash: &str) -> Result<grammers_client::pee
             Err(setup_error("Creating a new account is not supported."))
         }
         Err(SignInError::PasswordRequired(password_token)) => {
-            // The password keeps its exact characters: spaces can be part of it.
-            let password = ask_hidden("Your Telegram 2FA password (hidden): ")?;
-            client
-                .check_password(password_token, password)
-                .await
-                .map_err(|_| failed())
+            check_password(client, password_token).await
         }
         Err(_) => Err(failed()),
     }
 }
 
-/// Runs the interactive login and writes the session file. It never overwrites one.
-pub async fn run(config: &Config) -> Result<(), Error> {
-    if !stdin().is_terminal() || !stdout().is_terminal() {
-        return Err(Error::new(
-            "TTY_REQUIRED",
-            "Run this setup yourself in an interactive local terminal.",
-        ));
-    }
-    let settings = config
-        .telegram
-        .as_ref()
-        .ok_or_else(|| setup_error("Configure the telegram section first."))?;
-    let session_file = settings
-        .session_file
-        .as_deref()
-        .ok_or_else(|| setup_error("Set telegram.sessionFile to a private path outside Git."))?;
-    if session_file.symlink_metadata().is_ok() {
+async fn check_password(
+    client: &Client,
+    token: PasswordToken,
+) -> Result<grammers_client::peer::User, Error> {
+    // The password keeps its exact characters: spaces can be part of it.
+    let password = ask_hidden("Your Telegram 2FA password (hidden): ")?;
+    client
+        .check_password(token, password)
+        .await
+        .map_err(|_| setup_error("The password was not accepted. Nothing was saved."))
+}
+
+/// The phone-code login. Writes the session file; never overwrites one.
+pub async fn run(config: &Config, config_path: &Path) -> Result<(), Error> {
+    require_terminal()?;
+    let settings = settings(config)?;
+    let session_path = session_file(settings)?;
+    if session_path.symlink_metadata().is_ok() {
         return Err(setup_error(
             "Session file already exists; this will never overwrite it.",
         ));
@@ -140,37 +150,54 @@ pub async fn run(config: &Config) -> Result<(), Error> {
     if ask("Type CREATE SESSION to proceed: ")? != "CREATE SESSION" {
         return Err(setup_error("Cancelled before connecting."));
     }
-    prepare_directory(session_file)?;
-
+    ensure_private_dir(session_path.parent().ok_or_else(failed)?)?;
     let session = Arc::new(MemorySession::default());
     let pool = single_attempt_pool(Arc::clone(&session), credentials.api_id);
     let handle = pool.handle.thin.clone();
     let client = Client::new(pool.handle);
     let runner = tokio::spawn(pool.runner.run());
-    let result = sign_in(&client, &credentials.api_hash).await;
-    let outcome = result.and_then(|user| {
-        if user.is_bot() {
-            return Err(setup_error("Bot sessions are not supported."));
-        }
-        let id = user.id().bare_id().ok_or_else(failed)?.to_string();
-        if settings
-            .expected_user_id
-            .as_deref()
-            .is_some_and(|expected| expected != id)
-        {
-            return Err(setup_error(
-                "The logged-in account differs from expectedUserId. No session saved; review and \
-                 revoke this new session in Telegram Settings > Devices.",
-            ));
-        }
-        save_session(&session, session_file)?;
-        println!(
-            "Session saved privately. Set telegram.expectedUserId to \"{id}\".\nKeep mode=dry-run \
-             until you intentionally approve a real test."
-        );
-        Ok(())
-    });
+    let outcome = match sign_in(&client, &credentials.api_hash).await {
+        Ok(user) => accept_user(&user, settings, &session, config_path),
+        Err(error) => Err(error),
+    };
     handle.quit();
     runner.abort();
-    outcome
+    let id = outcome?;
+    println!("Logged in as Telegram user {id}. The session is saved privately.");
+    Ok(())
+}
+
+/// Finishes a QR login that stopped at the 2FA password.
+pub async fn finish_with_password(config: &Config, config_path: &Path) -> Result<(), Error> {
+    require_terminal()?;
+    let settings = settings(config)?;
+    let pending_path = config_path
+        .parent()
+        .ok_or_else(failed)?
+        .join("telegram-pending-session.json");
+    let pending = read_secret_file(&pending_path).map_err(|_| {
+        setup_error("No login is waiting for a password. Ask the agent to run telegram_login.")
+    })?;
+    let stored: StoredSession = serde_json::from_str(&pending).map_err(|_| failed())?;
+    let credentials = read_credentials(settings, &process_env)?;
+    let session = Arc::new(stored.into_memory_session());
+    let pool = single_attempt_pool(Arc::clone(&session), credentials.api_id);
+    let handle = pool.handle.thin.clone();
+    let client = Client::new(pool.handle);
+    let runner = tokio::spawn(pool.runner.run());
+    let outcome = async {
+        let tl::enums::account::Password::Password(password) = client
+            .invoke(&tl::functions::account::GetPassword {})
+            .await
+            .map_err(|_| failed())?;
+        let user = check_password(&client, PasswordToken::new(password)).await?;
+        accept_user(&user, settings, &session, config_path)
+    }
+    .await;
+    handle.quit();
+    runner.abort();
+    let id = outcome?;
+    let _ = std::fs::remove_file(&pending_path);
+    println!("Logged in as Telegram user {id}. The session is saved privately.");
+    Ok(())
 }

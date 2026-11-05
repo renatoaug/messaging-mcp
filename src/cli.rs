@@ -12,11 +12,16 @@ use serde_json::json;
 
 use crate::adapters::telegram_login;
 use crate::app::create_app;
-use crate::config::{Recipient, load_config};
+use crate::config::{Recipient, default_config_dir, load_config_from, resolve_config_path};
 use crate::error::Error;
 use crate::mcp::{MessagingServer, status_report};
 use crate::plan::Status;
+use crate::secrets::process_env;
 use crate::service::{MessagingService, PrepareInput};
+use crate::setup::Setup;
+use crate::setup::bridge_process;
+use crate::setup::config_file::ensure_config;
+use crate::setup::whatsapp_bridge::{BridgePaths, DEFAULT_PORT, port_from_base_url};
 
 /// Dependency-free timestamp formatting for the approval prompt.
 mod chrono_free {
@@ -50,12 +55,12 @@ mod chrono_free {
 
 /// Local MCP server and CLI for personal WhatsApp and Telegram messaging.
 ///
-/// Only telegram-login signs in, and only a person can run it. No command scans a QR code, starts
-/// the WhatsApp bridge or changes client settings.
+/// The MCP tools run the setup; approving each live message stays in this terminal.
 #[derive(Parser)]
 #[command(name = "messaging-mcp", version)]
 struct Cli {
-    /// Config file. Defaults to MESSAGING_MCP_CONFIG, then ./messaging-mcp.config.json.
+    /// Config file. Defaults to MESSAGING_MCP_CONFIG, then
+    /// ~/.config/messaging-mcp/messaging-mcp.config.json (created on first use).
     #[arg(long, global = true)]
     config: Option<PathBuf>,
     #[command(subcommand)]
@@ -83,8 +88,18 @@ enum Command {
     Allow(AllowCommand),
     /// Remove a recipient added by allow.
     Revoke { recipient_id: String },
-    /// Human-only: create the Telegram session file.
+    /// Human-only: log in to Telegram with a phone code, instead of the agent's QR login.
     TelegramLogin,
+    /// Human-only: type the Telegram 2FA password to finish the agent's QR login.
+    TelegramPassword,
+    /// Stop the WhatsApp bridge. The pairing is kept.
+    WhatsappBridgeStop,
+    /// Internal: runs the WhatsApp bridge on a pseudo-terminal. Started by whatsapp_setup.
+    #[command(hide = true)]
+    WhatsappBridgeSupervise {
+        #[arg(long)]
+        page: PathBuf,
+    },
 }
 
 #[derive(Args)]
@@ -151,9 +166,9 @@ fn ask(prompt: &str) -> Result<String, Error> {
     Ok(answer.trim_end_matches(['\r', '\n']).to_string())
 }
 
-async fn serve_mcp(service: MessagingService) -> Result<(), Error> {
+async fn serve_mcp(service: MessagingService, setup: Setup) -> Result<(), Error> {
     let failed = |_| Error::new("MCP_FAILED", "The MCP connection failed.");
-    let server = MessagingServer::new(Arc::new(service));
+    let server = MessagingServer::with_setup(Arc::new(service), setup);
     let running = server
         .serve(rmcp::transport::stdio())
         .await
@@ -268,15 +283,50 @@ async fn allow(service: &MessagingService, command: AllowCommand) -> Result<(), 
     }
 }
 
+/// The config path, creating a dry-run config when the default one does not exist yet.
+fn config_path(explicit: Option<&std::path::Path>) -> Result<PathBuf, Error> {
+    let path = resolve_config_path(explicit, &process_env)?;
+    let is_default =
+        default_config_dir(&process_env).is_some_and(|dir| path.parent() == Some(dir.as_path()));
+    if is_default {
+        ensure_config(&path)?;
+    }
+    Ok(path)
+}
+
+/// Runs the commands that do not need the messaging service. Returns false for the others.
+async fn run_setup_command(command: &Command, path: &std::path::Path) -> Result<bool, Error> {
+    let bridge = || BridgePaths::new(path.parent().unwrap_or(path));
+    match command {
+        Command::TelegramLogin => telegram_login::run(&load_config_from(path)?, path).await?,
+        Command::TelegramPassword => {
+            telegram_login::finish_with_password(&load_config_from(path)?, path).await?;
+        }
+        Command::WhatsappBridgeStop => {
+            print_json(&json!({ "stopped": bridge_process::stop(&bridge()) }))?;
+        }
+        Command::WhatsappBridgeSupervise { page } => {
+            let config = load_config_from(path)?;
+            let port = config
+                .whatsapp
+                .as_ref()
+                .and_then(|whatsapp| port_from_base_url(&whatsapp.base_url))
+                .unwrap_or(DEFAULT_PORT);
+            bridge_process::supervise(&bridge(), port, page)?;
+        }
+        _ => return Ok(false),
+    }
+    Ok(true)
+}
+
 async fn run(cli: Cli) -> Result<ExitCode, Error> {
-    let config = load_config(cli.config.as_deref())?;
-    if matches!(cli.command, Command::TelegramLogin) {
-        telegram_login::run(&config).await?;
+    let path = config_path(cli.config.as_deref())?;
+    if run_setup_command(&cli.command, &path).await? {
         return Ok(ExitCode::SUCCESS);
     }
-    let service = create_app(config)?;
+    let service = create_app(load_config_from(&path)?)?;
     match cli.command {
-        Command::Mcp => serve_mcp(service).await?,
+        Command::Mcp => serve_mcp(service, Setup::new(&path, &process_env)?).await?,
         Command::Doctor => print_json(&status_report(&service))?,
         Command::Recipients => print_json(&service.list_recipients()?)?,
         Command::Prepare(args) => prepare(&service, args)?,
@@ -298,7 +348,10 @@ async fn run(cli: Cli) -> Result<ExitCode, Error> {
             service.revoke_recipient(&recipient_id)?;
             print_json(&json!({ "revoked": recipient_id }))?;
         }
-        Command::TelegramLogin => {}
+        Command::TelegramLogin
+        | Command::TelegramPassword
+        | Command::WhatsappBridgeStop
+        | Command::WhatsappBridgeSupervise { .. } => {}
     }
     Ok(ExitCode::SUCCESS)
 }

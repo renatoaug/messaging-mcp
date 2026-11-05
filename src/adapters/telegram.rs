@@ -197,6 +197,32 @@ impl StoredSession {
     }
 }
 
+/// The known datacenters. Their authorization keys are what the session file preserves.
+const DATACENTERS: std::ops::RangeInclusive<i32> = 1..=5;
+
+/// Saves the authorization keys and home datacenter of `session` as an owner-only file.
+pub fn write_session(session: &MemorySession, path: &std::path::Path) -> Result<(), Error> {
+    use grammers_session::Session as _;
+    let failed = || {
+        Error::new(
+            "TELEGRAM_SESSION_WRITE_FAILED",
+            "The session could not be saved.",
+        )
+    };
+    let dc_options = DATACENTERS
+        .filter_map(|id| session.dc_option(id).ok().flatten())
+        .filter(|option| option.auth_key.is_some())
+        .collect();
+    let home_dc = session.home_dc_id().map_err(|_| failed())?;
+    let mut json = serde_json::to_string(&StoredSession {
+        home_dc,
+        dc_options,
+    })
+    .map_err(|_| failed())?;
+    json.push('\n');
+    crate::setup::config_file::write_private_file(path, json.as_bytes())
+}
+
 pub struct Credentials {
     pub api_id: i32,
     pub api_hash: String,

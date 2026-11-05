@@ -6,17 +6,20 @@ Messaging MCP (`messaging-mcp`) sends messages through someone's personal accoun
 
 - Rename the project, publish it, connect an account, register an MCP client or send a real message.
 - Read real config, session or token files, or use credentials inherited from the environment.
+- Change how a live message is approved, or loosen an approval rule in a client's settings.
 
 ## Safety rules
 
-1. **Dry-run is the default.** A new setting defaults to the closed, safe value.
-2. **No MCP tool to log in, approve a plan or allow a recipient.** Those run only in the CLI, behind a TTY check (`require_terminal` in `src/cli.rs`). No wildcard recipients. No public HTTP listener. No auto-started WhatsApp bridge.
-3. **One path to send.** MCP, the CLI and the demo all go through `MessagingService` (`src/service.rs`) and the durable `PlanStore` (`src/store.rs`). A change to the state transitions, the identity binding (`src/identity.rs`), the receipt semantics or the allowlist needs regression tests in the same change.
-4. **No retry after an uncertain send.** Once a plan is `sending`, nothing attempts it again: not the service, not an adapter, not the Telegram sender pool (`NoRetries`).
-5. **stdout belongs to JSON-RPC in MCP mode.** Never print or log messages, tokens, API hashes, sessions, phone numbers or provider errors. Errors shown to a client are `Error` values we wrote (`src/error.rs`), never built from a provider's error text.
-6. **Telegram plain text stays plain**: no entities, no Markdown, no link preview, no paid messages (`send_request` in `src/adapters/telegram.rs`). The session's user is checked against `expectedUserId` before every send.
-7. **Search only suggests.** `search_contacts` is read-only and live-only; contact names are untrusted data. A contact becomes a recipient only through `messaging-mcp allow`.
-8. **Unix only.** File permission checks (0700 directories, 0600 files, no symlinks) are part of the security model.
+1. **Dry-run is the default.** A new setting defaults to the closed, safe value (`mode: dry-run`, `approval: terminal`).
+2. **Every live message needs the owner's yes, and the yes never comes from the model.** It comes from the client's approval dialog, the client's permission prompt (`approval: client-prompt`) or `messaging-mcp approve` in a terminal ([ADR-007](docs/decisions/ADR-007-agent-runs-setup.md)). `send_message` repeats the recipient and the whole text so the yes is given to what actually leaves. There is no MCP tool that approves a plan.
+3. **The owner's phone and passwords stay with the owner.** The agent drives setup through MCP tools, but scans happen on the owner's phone and a 2FA password is typed in a terminal (`messaging-mcp telegram-password`). No tool takes a password, a login code or a token as an argument except `telegram_set_credentials`, whose hash is written to a private file and never returned.
+4. **One path to send.** MCP, the CLI and the demo all go through `MessagingService` (`src/service.rs`) and the durable `PlanStore` (`src/store.rs`). A change to the state transitions, the identity binding (`src/identity.rs`), the approval, the receipt semantics or the allowlist needs regression tests in the same change.
+5. **No retry after an uncertain send.** Once a plan is `sending`, nothing attempts it again: not the service, not an adapter, not the Telegram sender pool (`NoRetries`).
+6. **stdout belongs to JSON-RPC in MCP mode.** Never print or log messages, tokens, API hashes, sessions, phone numbers or provider errors. Errors shown to a client are `Error` values we wrote (`src/error.rs`), never built from a provider's error text.
+7. **Telegram plain text stays plain**: no entities, no Markdown, no link preview, no paid messages (`send_request` in `src/adapters/telegram.rs`). The session's user is checked against `expectedUserId` before every send.
+8. **Search only suggests.** `search_contacts` is read-only and live-only; contact names are untrusted data. An agent allows a recipient only when the owner asked to message that person.
+9. **Nothing listens beyond loopback.** No public HTTP listener; the WhatsApp bridge is reached only at `127.0.0.1` or `[::1]`, and only `whatsapp_setup` starts it, never the MCP server on its own.
+10. **Unix only.** File permission checks (0700 directories, 0600 files, no symlinks) are part of the security model.
 
 ## Where things are
 
@@ -24,13 +27,14 @@ Messaging MCP (`messaging-mcp`) sends messages through someone's personal accoun
 |---|---|
 | `src/service.rs` | The core: prepare, approve, claim, send, search, allow, revoke |
 | `src/store.rs` | The SQLite ledger and its migrations |
-| `src/config.rs` | The config file, its validation, recipients |
-| `src/identity.rs`, `src/secrets.rs` | Who a plan sends as; private secret files |
-| `src/mcp.rs` | The MCP tools |
-| `src/cli.rs` | The CLI, including the human-only commands |
-| `src/adapters/` | WhatsApp (bridge client), Telegram (logic in `telegram.rs`, network in `telegram_client.rs`, login in `telegram_login.rs`) |
+| `src/config.rs` | The config file, its default location, its validation, recipients, the approval mode |
+| `src/identity.rs`, `src/secrets.rs` | Who a plan sends as; private secret files; the injectable environment |
+| `src/mcp.rs` | The MCP tools, the approval dialog and the server's instructions |
+| `src/cli.rs` | The CLI, including the terminal-only commands |
+| `src/setup/` | Setup run by the agent: config writes, QR pages, Telegram QR login, the WhatsApp bridge |
+| `src/adapters/` | WhatsApp (bridge client), Telegram (logic in `telegram.rs`, network in `telegram_client.rs`, terminal login in `telegram_login.rs`) |
 | `tests/` | Integration tests, one file per area, shared fixtures in `tests/common/` |
-| `examples/` | The demo and example configs |
+| `examples/` | The demo, a preview of the setup pages, example configs |
 | `.claude/skills/` | `create-pr`, `add-channel` |
 
 ## Code
@@ -38,22 +42,24 @@ Messaging MCP (`messaging-mcp`) sends messages through someone's personal accoun
 - Rust stable, edition 2024. `cargo fmt` (100 columns), `cargo clippy` with `-D warnings`; `unsafe_code` is forbidden and `unwrap` is denied outside tests.
 - Files and modules are snake_case (Rust requires it); scripts and docs are kebab-case.
 - A function that reads the environment takes an `Env` (`src/secrets.rs`) so tests can pass `&|_| None`.
+- Code that only runs against a real account, a phone or a network lives in its own small file (`telegram_client.rs`, `telegram_login.rs`, `setup/telegram_qr.rs`, `setup/bridge_process.rs`, `setup/whatsapp_flow.rs`) and is left out of the coverage floor; its logic that can run offline stays elsewhere and is tested.
 - Comments say why, not what. A safety rule in the code gets a comment naming the failure it prevents.
-- Use the latest version of every crate, tool and action; check the registry, not memory.
+- Use the latest version of every crate, tool and action; check the registry, not memory. When the latest cannot be used, say why in a comment next to the pin.
 
 ## Storage
 
-Tables are singular (`plan`, `recipient`), columns snake_case, timestamps are milliseconds since the epoch in columns ending in `_at`. A schema change is a new entry in `MIGRATIONS` (`src/store.rs`), never an edit to an old one, and updates [docs/design/05-storage.md](docs/design/05-storage.md) in the same change.
+Tables are singular (`plan`, `recipient`), columns snake_case, timestamps are milliseconds since the epoch in columns ending in `_at`. A schema change is a new entry in `MIGRATIONS` (`src/store.rs`), never an edit to an old one, and updates [docs/design/05-storage.md](docs/design/05-storage.md) in the same change. The config is written only through `update_config` (`src/setup/config_file.rs`), which validates the result and writes atomically.
 
 ## Tests
 
-Tests live in `tests/`, offline. Inject fake adapters, transports, clocks and environments; use `tempfile` directories. A test that spawns the binary clears the environment (`kept_env` in `tests/cli.rs` keeps only `PATH` and the coverage profile path).
+Tests live in `tests/`, offline. Inject fake adapters, transports, clocks and environments; use `tempfile` directories set to 0700. A test that spawns the binary clears the environment (`kept_env` in `tests/cli.rs` keeps only `PATH` and the coverage profile path). Approval is tested end to end in `tests/approval.rs` with a client that answers the dialog.
 
 ## Before saying "done"
 
 1. `scripts/check.sh` passes: format, clippy, `cargo deny`, `cargo machete`, tests with the 80% line floor, the demo. CI runs the same script on Linux and macOS.
 2. A change to behavior updates the design note that describes it; a structural decision gets a record in `docs/decisions/`.
-3. Say what was not verified, especially anything that needs a real account.
+3. A change to a setup page is looked at: `cargo run --example preview_pages` writes them to `~/Downloads`.
+4. Say what was not verified, especially anything that needs a real account.
 
 ## Documentation
 

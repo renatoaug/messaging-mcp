@@ -13,6 +13,10 @@ Updated: 2026-11-05
 - `stateDir` must be a directory you own with mode 0700, not a symlink; `plans.sqlite` a regular file with mode 0600, opened without following symlinks. Anything else is `STATE_PERMISSIONS`.
 - SQLite is compiled into the binary (`rusqlite` with `bundled`), version 3.54 today. The file must stay on a local disk.
 
+## The config folder
+
+Next to the config, in `~/.config/messaging-mcp/` (0700), the setup tools keep: `telegram-api-hash` and `telegram-session.json` (0600), `telegram-pending-session.json` while a login waits for a 2FA password, and `whatsapp-bridge/` with the bridge's source, binary, `run/store/` (its session, token and history), `bridge.log`, `build.log` and `bridge.pid`.
+
 ## `plan`
 
 One row per idempotency key.
