@@ -1,0 +1,74 @@
+name: Labels from the title
+
+# The title follows Conventional Commits, `type(scope): subject`, so it already says the type and
+# the scope: this keeps the `type:` and `scope:` labels in step with it. A scope gets a label only
+# when the repository has one with that name. Priority is a person's call: an issue opened without
+# one gets `needs: triage`, which goes away once a `priority:` label is added or the issue is closed.
+
+# A pull request is labelled when it opens and again when it closes, from the title it ends with
+# (the release note reads it); edits in between run nothing.
+on:
+  pull_request_target:
+    types: [opened, closed]
+  issues:
+    types: [opened, reopened, labeled, closed]
+
+jobs:
+  labels:
+    name: Labels
+    runs-on: ubuntu-latest
+
+    permissions:
+      issues: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/github-script@v9
+        with:
+          script: |
+            const item = context.payload.pull_request ?? context.payload.issue
+            const { owner, repo } = context.repo
+            const issue_number = item.number
+            const current = item.labels.map((l) => l.name)
+            const add = (labels) =>
+              labels.length && github.rest.issues.addLabels({ owner, repo, issue_number, labels })
+            const remove = (name) =>
+              github.rest.issues.removeLabel({ owner, repo, issue_number, name }).catch(() => {})
+
+            // A closed issue waits for nothing: only `needs: triage` goes; the rest still describes it.
+            if (context.payload.issue && context.payload.action === 'closed') {
+              if (current.includes('needs: triage')) await remove('needs: triage')
+              return
+            }
+
+            if (context.payload.action === 'labeled') {
+              if (context.payload.label.name.startsWith('priority: ') && current.includes('needs: triage'))
+                await remove('needs: triage')
+              return
+            }
+
+            const TYPES = {
+              feat: 'feature', fix: 'bug', docs: 'docs', chore: 'chore', build: 'chore', refactor: 'refactor',
+              style: 'refactor', ci: 'ci', perf: 'perf', test: 'test', revert: 'chore', security: 'security',
+            }
+            const known = new Set(
+              (await github.paginate(github.rest.issues.listLabelsForRepo, { owner, repo, per_page: 100 })).map((l) => l.name),
+            )
+            const fromTitle = (title) => {
+              const m = (title ?? '').match(/^(\w+)(?:\(([^)]+)\))?!?:/)
+              const out = []
+              if (m && TYPES[m[1]]) out.push(`type: ${TYPES[m[1]]}`)
+              for (const s of (m?.[2] ?? '').split(',').map((x) => x.trim()).filter(Boolean)) out.push(`scope: ${s}`)
+              return out.filter((l) => known.has(l))
+            }
+            const wanted = fromTitle(item.title)
+
+            // A pull request closing with another type in its title drops the old `type:` label; scope
+            // labels may have been added by hand, so they stay.
+            if (context.payload.pull_request)
+              for (const l of current)
+                if (l.startsWith('type: ') && !wanted.includes(l)) await remove(l)
+            const missing = wanted.filter((l) => !current.includes(l))
+            if (context.payload.issue && context.payload.action === 'opened' && !current.some((l) => l.startsWith('priority: ')))
+              missing.push('needs: triage')
+            await add(missing)

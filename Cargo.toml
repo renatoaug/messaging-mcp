@@ -1,0 +1,56 @@
+[package]
+name = "messaging-mcp"
+version = "0.1.0"
+edition = "2024"
+description = "Local, safety-first MCP server and CLI for personal WhatsApp and Telegram messaging."
+license = "MIT"
+publish = false
+
+[lib]
+name = "messaging_mcp"
+path = "src/lib.rs"
+
+[[bin]]
+name = "messaging-mcp"
+path = "src/main.rs"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+cognitive_complexity = "deny"
+unwrap_used = "deny"
+
+[profile.release]
+lto = "thin"
+strip = true
+
+[dependencies]
+async-trait = "0.1.92"
+clap = { version = "4.6.7", features = ["derive"] }
+grammers-client = { version = "0.11.0", default-features = false }
+grammers-mtsender = "0.11.0"
+grammers-session = { version = "0.11.0", default-features = false, features = ["serde"] }
+grammers-tl-types = "0.11.0"
+reqwest = { version = "0.13.5", default-features = false }
+rmcp = { version = "3.9.0", features = ["server", "transport-io", "macros", "schemars"] }
+rpassword = "7.5.4"
+rusqlite = { version = "0.41.1", features = ["bundled"] }
+rustix = { version = "1.1.6", features = ["fs", "process"] }
+schemars = "1.2.3"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.11.1"
+tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "time"] }
+url = "2.5.8"
+
+[dev-dependencies]
+async-trait = "0.1.92"
+grammers-session = { version = "0.11.0", default-features = false, features = ["serde"] }
+grammers-tl-types = "0.11.0"
+rmcp = { version = "3.9.0", features = ["client", "transport-child-process"] }
+rusqlite = "0.41.1"
+serde_json = "1.0.154"
+tempfile = "3.27.0"
+tokio = { version = "1.54.1", features = ["net", "io-util", "process", "sync"] }

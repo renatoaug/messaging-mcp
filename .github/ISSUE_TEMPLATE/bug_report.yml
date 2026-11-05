@@ -1,0 +1,53 @@
+name: Bug report
+description: Something in Messaging MCP does not work as it should.
+title: "fix: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: A security problem goes privately to the maintainer, never in an issue. See SECURITY.md.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you saw, including the error code (for example `PLAN_CONTEXT_CHANGED`).
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where
+      options:
+        - MCP server (Claude Code, Codex or another client)
+        - CLI
+        - WhatsApp
+        - Telegram
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version and system
+      description: The output of `messaging-mcp --version`, and macOS or Linux.
+  - type: textarea
+    id: context
+    attributes:
+      label: Output
+      description: Never paste tokens, API hashes, sessions, phone numbers, message text or anything from your config's secret files.

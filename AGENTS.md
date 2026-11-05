@@ -1,0 +1,68 @@
+# AGENTS.md
+
+Messaging MCP (`messaging-mcp`) sends messages through someone's personal accounts. Every rule below exists because a mistake here reaches a real person. Read [README.md](README.md) and [SECURITY.md](SECURITY.md) before the first change.
+
+## Never, without the owner's explicit authorization
+
+- Rename the project, publish it, connect an account, register an MCP client or send a real message.
+- Read real config, session or token files, or use credentials inherited from the environment.
+
+## Safety rules
+
+1. **Dry-run is the default.** A new setting defaults to the closed, safe value.
+2. **No MCP tool to log in, approve a plan or allow a recipient.** Those run only in the CLI, behind a TTY check (`require_terminal` in `src/cli.rs`). No wildcard recipients. No public HTTP listener. No auto-started WhatsApp bridge.
+3. **One path to send.** MCP, the CLI and the demo all go through `MessagingService` (`src/service.rs`) and the durable `PlanStore` (`src/store.rs`). A change to the state transitions, the identity binding (`src/identity.rs`), the receipt semantics or the allowlist needs regression tests in the same change.
+4. **No retry after an uncertain send.** Once a plan is `sending`, nothing attempts it again: not the service, not an adapter, not the Telegram sender pool (`NoRetries`).
+5. **stdout belongs to JSON-RPC in MCP mode.** Never print or log messages, tokens, API hashes, sessions, phone numbers or provider errors. Errors shown to a client are `Error` values we wrote (`src/error.rs`), never built from a provider's error text.
+6. **Telegram plain text stays plain**: no entities, no Markdown, no link preview, no paid messages (`send_request` in `src/adapters/telegram.rs`). The session's user is checked against `expectedUserId` before every send.
+7. **Search only suggests.** `search_contacts` is read-only and live-only; contact names are untrusted data. A contact becomes a recipient only through `messaging-mcp allow`.
+8. **Unix only.** File permission checks (0700 directories, 0600 files, no symlinks) are part of the security model.
+
+## Where things are
+
+| Path | What lives there |
+|---|---|
+| `src/service.rs` | The core: prepare, approve, claim, send, search, allow, revoke |
+| `src/store.rs` | The SQLite ledger and its migrations |
+| `src/config.rs` | The config file, its validation, recipients |
+| `src/identity.rs`, `src/secrets.rs` | Who a plan sends as; private secret files |
+| `src/mcp.rs` | The MCP tools |
+| `src/cli.rs` | The CLI, including the human-only commands |
+| `src/adapters/` | WhatsApp (bridge client), Telegram (logic in `telegram.rs`, network in `telegram_client.rs`, login in `telegram_login.rs`) |
+| `tests/` | Integration tests, one file per area, shared fixtures in `tests/common/` |
+| `examples/` | The demo and example configs |
+| `.claude/skills/` | `create-pr`, `add-channel` |
+
+## Code
+
+- Rust stable, edition 2024. `cargo fmt` (100 columns), `cargo clippy` with `-D warnings`; `unsafe_code` is forbidden and `unwrap` is denied outside tests.
+- Files and modules are snake_case (Rust requires it); scripts and docs are kebab-case.
+- A function that reads the environment takes an `Env` (`src/secrets.rs`) so tests can pass `&|_| None`.
+- Comments say why, not what. A safety rule in the code gets a comment naming the failure it prevents.
+- Use the latest version of every crate, tool and action; check the registry, not memory.
+
+## Storage
+
+Tables are singular (`plan`, `recipient`), columns snake_case, timestamps are milliseconds since the epoch in columns ending in `_at`. A schema change is a new entry in `MIGRATIONS` (`src/store.rs`), never an edit to an old one, and updates [docs/design/05-storage.md](docs/design/05-storage.md) in the same change.
+
+## Tests
+
+Tests live in `tests/`, offline. Inject fake adapters, transports, clocks and environments; use `tempfile` directories. A test that spawns the binary clears the environment (`kept_env` in `tests/cli.rs` keeps only `PATH` and the coverage profile path).
+
+## Before saying "done"
+
+1. `scripts/check.sh` passes: format, clippy, `cargo deny`, `cargo machete`, tests with the 80% line floor, the demo. CI runs the same script on Linux and macOS.
+2. A change to behavior updates the design note that describes it; a structural decision gets a record in `docs/decisions/`.
+3. Say what was not verified, especially anything that needs a real account.
+
+## Documentation
+
+How to run and configure Messaging MCP is in `README.md` and `docs/`. A decision that shapes the code gets a record in `docs/decisions/`, following the template in `docs/decisions/README.md`. Docs are in English. Do not hard-wrap Markdown: each paragraph or list item stays on one line.
+
+## Commits and pull requests
+
+Never mention Claude Code (or any AI) in PRs, commits or anything versioned in this repository: no "Generated with" footers, session links, `Claude-Session:` trailers or `Co-Authored-By: Claude`.
+
+Commits follow Conventional Commits with a scope when it makes sense (`feat(telegram): ...`, `fix(store): ...`): lowercase imperative subject, no trailing period, no dash. Few commits, each a complete change.
+
+To open a PR, use the `/create-pr` skill, and only after the owner said yes to that PR. The title becomes the release note; the body follows `.github/PULL_REQUEST_TEMPLATE.md` (**What?**, **Why?**, **Acceptance criteria**). Base is `main`.

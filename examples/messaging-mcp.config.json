@@ -1,0 +1,12 @@
+{
+  "mode": "dry-run",
+  "stateDir": "../.messaging-mcp-state",
+  "planTtlSeconds": 600,
+  "maxSendsPerMinute": 6,
+  "recipients": [
+    { "id": "wa-demo", "label": "Made-up number: simulation only", "channel": "whatsapp", "target": "5511999999999@s.whatsapp.net" },
+    { "id": "tg-self", "label": "Telegram: Saved Messages", "channel": "telegram", "target": { "kind": "self" } }
+  ],
+  "whatsapp": { "baseUrl": "http://127.0.0.1:8080/api", "timeoutMs": 15000 },
+  "telegram": { "timeoutMs": 20000 }
+}

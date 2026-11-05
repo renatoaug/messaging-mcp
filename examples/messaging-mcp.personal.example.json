@@ -1,0 +1,22 @@
+{
+  "mode": "dry-run",
+  "stateDir": "/absolute/private/messaging-mcp/state",
+  "planTtlSeconds": 600,
+  "maxSendsPerMinute": 6,
+  "recipients": [
+    { "id": "tg-self", "label": "My account: Saved Messages", "channel": "telegram", "target": { "kind": "self" } }
+  ],
+  "whatsapp": {
+    "accountLabel": "REPLACE with the verified personal account",
+    "baseUrl": "http://127.0.0.1:8080/api",
+    "tokenFile": "/absolute/private/whatsapp-bridge/store/.bridge-token",
+    "timeoutMs": 15000
+  },
+  "telegram": {
+    "apiId": 123456,
+    "expectedUserId": "123456789",
+    "apiHashFile": "/absolute/private/messaging-mcp/telegram-api-hash",
+    "sessionFile": "/absolute/private/messaging-mcp/telegram-session.json",
+    "timeoutMs": 20000
+  }
+}

@@ -1,0 +1,18 @@
+/target/
+*.profraw
+lcov.info
+
+# Local state and credentials: never in Git
+.env
+.env.*
+.messaging-mcp-state/
+.secrets/
+messaging-mcp.config.json
+!examples/messaging-mcp.config.json
+*.sqlite*
+*.db*
+*.session*
+*-session.json
+.bridge-token
+*.log
+.DS_Store

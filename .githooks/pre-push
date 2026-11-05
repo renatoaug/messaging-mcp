@@ -1,0 +1,7 @@
+#!/bin/sh
+# Runs what CI runs before anything leaves this machine, so a push never turns the pull request red.
+# Turn it on once with `git config core.hooksPath .githooks`. Skip once with `git push --no-verify`.
+set -e
+# CI runs these checks itself, and its release job pushes the version commit: never block it.
+[ -n "$CI" ] && exit 0
+scripts/check.sh

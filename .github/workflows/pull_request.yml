@@ -1,0 +1,39 @@
+name: On pull request
+
+# Every pull request gets the same checks a contributor runs locally (scripts/check.sh): format,
+# clippy, licenses and advisories, unused dependencies, the offline tests with their coverage floor,
+# and the demo. On both supported systems, since the binary is Unix only.
+on:
+  pull_request:
+
+concurrency:
+  group: pr-${{ github.ref }}
+  cancel-in-progress: true # a new push supersedes the run it replaced
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Checks on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # rust-toolchain.toml picks the latest stable and its components.
+      - run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov,cargo-deny,cargo-machete
+
+      - run: scripts/check.sh
