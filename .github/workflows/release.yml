@@ -38,6 +38,8 @@ jobs:
       # scripts/set-version.sh refreshes Cargo.lock with cargo.
       - run: rustup show active-toolchain || rustup toolchain install
 
+      # The preset stays on 9.x: 10.x needs conventional-changelog-writer 9, and semantic-release
+      # 25's release notes generator still ships writer 8.
       - id: semantic
         run: >
           npx --yes
@@ -45,7 +47,7 @@ jobs:
           -p @semantic-release/exec@7.1.0
           -p @semantic-release/changelog@7.0.0
           -p @semantic-release/git@11.0.1
-          -p conventional-changelog-conventionalcommits@10.4.1
+          -p conventional-changelog-conventionalcommits@9.3.1
           semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
