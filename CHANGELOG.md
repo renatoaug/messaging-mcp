@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.0](https://github.com/renatoaug/messaging-mcp/compare/v0.3.1...v0.4.0) (2026-11-05)
+
+### Features
+
+* let the owner approve messages in the chat ([904ab1d](https://github.com/renatoaug/messaging-mcp/commit/904ab1d3a10a5e639fbcde87c1eb377d2ed5d4ef))
+* search the address book, resume the bridge, and enter credentials without a browser ([57bd889](https://github.com/renatoaug/messaging-mcp/commit/57bd889ed4c9ebf67691837976752f179856dfba))
+
+### Bug Fixes
+
+* approve a live message only through the mode the owner chose ([17ad8f6](https://github.com/renatoaug/messaging-mcp/commit/17ad8f6c1267a79868177343ca33a720c9dd9ec4))
+
 ## [0.3.1](https://github.com/renatoaug/messaging-mcp/compare/v0.3.0...v0.3.1) (2026-11-05)
 
 ## [0.3.0](https://github.com/renatoaug/messaging-mcp/compare/v0.2.1...v0.3.0) (2026-11-05)
