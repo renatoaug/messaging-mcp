@@ -8,7 +8,7 @@
 #   MESSAGING_MCP_VERSION=v0.2.1           a release tag (default: the latest)
 #   MESSAGING_MCP_INSTALL_DIR=~/.local/bin  where both binaries go
 #   MESSAGING_MCP_REGISTER=0               do not register in Claude Code or Codex
-#   MESSAGING_MCP_APPROVAL=client-prompt   or "terminal": skip the question about approvals
+#   MESSAGING_MCP_APPROVAL=client-prompt   "agent" or "terminal": skip the question about approvals
 set -eu
 
 REPO="renatoaug/messaging-mcp"
@@ -97,20 +97,21 @@ fi
 approval="${MESSAGING_MCP_APPROVAL:-}"
 # /dev/tty can exist without a terminal behind it (no controlling terminal): try opening it.
 if [ -z "$approval" ] && (: </dev/tty) 2>/dev/null; then
-  printf '\nApprove each real message in your assistant'"'"'s own prompt (it shows the\ndestination and the whole message), instead of in a terminal? [Y/n] ' >/dev/tty
+  printf '\nHow do you approve each real message?\n  1) in your assistant'"'"'s permission prompt, which shows the destination and the whole message (default)\n  2) by answering your assistant in the chat (no prompt; nothing outside the assistant checks)\n  3) in a terminal, with messaging-mcp approve\nChoose [1/2/3] ' >/dev/tty
   answer=""
   read -r answer </dev/tty || answer=""
   case "$answer" in
-    n* | N*) approval="terminal" ;;
+    2) approval="agent" ;;
+    3) approval="terminal" ;;
     *) approval="client-prompt" ;;
   esac
 fi
 case "$approval" in
-  client-prompt | terminal)
+  client-prompt | agent | terminal)
     if "$DIR/messaging-mcp" approval "$approval" >/dev/null 2>&1; then
       say "Approval: $approval."
     else
-      say "Approval: this version cannot change it; it stays terminal. Install a newer release to use client-prompt."
+      say "Approval: this version cannot change it; it stays terminal. Install a newer release to choose another."
     fi
     ;;
   *)

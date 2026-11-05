@@ -100,7 +100,8 @@ enum Command {
     /// Stop the WhatsApp bridge. The pairing is kept.
     WhatsappBridgeStop,
     /// Choose how live messages are approved: in your assistant's prompt (client-prompt, which
-    /// also adds Claude Code's "ask" rule for send_message) or in a terminal (terminal).
+    /// also adds Claude Code's "ask" rule for send_message), by your yes in the chat (agent,
+    /// which removes that rule), or in a terminal (terminal).
     Approval {
         #[arg(value_enum)]
         mode: ApprovalMode,
@@ -119,6 +120,7 @@ enum ApprovalMode {
     ClientPrompt,
     Terminal,
     Dialog,
+    Agent,
 }
 
 #[derive(Args)]
@@ -346,6 +348,7 @@ async fn run_setup_command(command: &Command, path: &std::path::Path) -> Result<
                 ApprovalMode::ClientPrompt => Approval::ClientPrompt,
                 ApprovalMode::Terminal => Approval::Terminal,
                 ApprovalMode::Dialog => Approval::Dialog,
+                ApprovalMode::Agent => Approval::Agent,
             };
             let (config, clients) = approval::set_approval(path, approval, &process_env)?;
             print_json(&json!({ "approval": config.approval, "clients": clients }))?;

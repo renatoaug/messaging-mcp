@@ -177,6 +177,10 @@ pub enum Approval {
     /// MCP's approval dialog (elicitation), for clients that actually show it. Codex declares it
     /// but declined it without showing anything on 2026-11-05, so it is never assumed.
     Dialog,
+    /// The agent: it shows the destination and the whole message in the chat and sends only
+    /// after the owner says yes there. The server cannot tell who said yes, so a confused or
+    /// manipulated agent could send to an allowed recipient; chosen by the owner, never default.
+    Agent,
 }
 
 fn default_max_sends() -> i64 {

@@ -103,7 +103,7 @@ There is no tool that approves a plan. The server's instructions tell the agent:
 | `telegram-password` | A person at a terminal | Types the 2FA password that finishes a QR login |
 | `telegram-credentials` | A person at a terminal | Enters the Telegram app's `api_id` and `api_hash` (hidden), without a browser |
 | `whatsapp-bridge-stop` | Anyone | Stops the bridge; the pairing is kept |
-| `approval client-prompt\|terminal` | The owner | How live messages are approved; `client-prompt` also makes Claude Code and Codex ask before `send_message` ([02-setup.md](02-setup.md#approving-messages)) |
+| `approval client-prompt\|agent\|terminal\|dialog` | The owner | How live messages are approved; `client-prompt` also makes Claude Code and Codex ask before `send_message`, `agent` removes those prompts ([02-setup.md](02-setup.md#approving-messages)) |
 
 Every command takes `--config FILE`; without it, `MESSAGING_MCP_CONFIG`, then `~/.config/messaging-mcp/messaging-mcp.config.json`, created in dry-run on first use. Errors go to stderr as one JSON line, exit code 1.
 

@@ -11,7 +11,7 @@ Updated: 2026-11-05
 | File | Covers |
 |---|---|
 | `service.rs` | The state machine: dry-run, approval, idempotency across restarts, the concurrent claim, terminal results, validation, expiry and context changes, the shared rate limit, the crash after the claim, identity rotation, the failed final write, search and allow/revoke, the approval text |
-| `approval.rs` | The real binary with a client that answers the approval dialog: each mode (`dialog` approved and declined, `client-prompt` without a second question even when the client declares the dialog, `terminal`), no dialog, and a send that does not repeat the prepared message |
+| `approval.rs` | The real binary with a client that answers the approval dialog: each mode (`dialog` approved and declined, `client-prompt` and `agent` without a second question even when the client declares the dialog, `terminal`), no dialog, and a send that does not repeat the prepared message |
 | `adapters.rs` | WhatsApp against a local HTTP server (the contract, timeouts, odd bodies, rejections, no token); Telegram against a fake transport (authorization, timeout, close failure), the exact request, receipts, name cleaning |
 | `identity.rs` | The sender fingerprint, credentials, the session file format, which contacts are offered |
 | `setup.rs` | The default config, validated atomic writes, private files, credentials, the setup status and next steps, the login reading the file and not a stale copy, QR codes read from the bridge's drawing, the pages |

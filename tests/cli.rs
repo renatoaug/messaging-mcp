@@ -427,3 +427,42 @@ fn approval_client_prompt_adds_the_claude_ask_rule_once_and_keeps_other_settings
     assert_eq!(f.json(&["approval", "terminal"])["approval"], "terminal");
     assert_eq!(f.json(&["doctor"])["mode"], "dry-run");
 }
+
+#[test]
+fn approval_agent_removes_the_client_prompts_and_keeps_other_settings() {
+    let f = fixture();
+    let claude = f.dir.path().join(".claude");
+    std::fs::create_dir(&claude).unwrap();
+    let settings = claude.join("settings.json");
+    std::fs::write(
+        &settings,
+        json!({ "theme": "dark", "permissions": { "ask": ["Bash(rm:*)"] } }).to_string(),
+    )
+    .unwrap();
+    let codex = f.dir.path().join(".codex");
+    std::fs::create_dir(&codex).unwrap();
+    let codex_config = codex.join("config.toml");
+    let codex_before = "# my settings\nmodel = \"o3\"\n\n[mcp_servers.messaging-mcp]\ncommand = \"/bin/messaging-mcp\"\nargs = [\"mcp\"]\n";
+    std::fs::write(&codex_config, codex_before).unwrap();
+    f.json(&["approval", "client-prompt"]);
+
+    let agent = f.json(&["approval", "agent"]);
+    assert_eq!(agent["approval"], "agent");
+    assert_eq!(agent["clients"]["claudeCode"]["askRuleRemoved"], true);
+    assert_eq!(agent["clients"]["codex"]["promptRemoved"], true);
+    assert!(agent["clients"]["warning"].is_string());
+    let again = f.json(&["approval", "agent"]);
+    assert_eq!(again["clients"]["claudeCode"]["askRuleRemoved"], false);
+    assert_eq!(again["clients"]["codex"]["promptRemoved"], false);
+
+    let after: Value = serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+    assert_eq!(after["theme"], "dark");
+    assert_eq!(after["permissions"]["ask"], json!(["Bash(rm:*)"]));
+    let codex_after = std::fs::read_to_string(&codex_config).unwrap();
+    assert!(!codex_after.contains("approval_mode"), "{codex_after}");
+    assert!(!codex_after.contains("tools"), "{codex_after}");
+    assert!(
+        codex_after.starts_with("# my settings\nmodel = \"o3\""),
+        "{codex_after}"
+    );
+}

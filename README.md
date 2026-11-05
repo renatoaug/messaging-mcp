@@ -39,7 +39,7 @@ Install with one command (macOS or Linux):
 curl -fsSL https://raw.githubusercontent.com/renatoaug/messaging-mcp/main/install.sh | sh
 ```
 
-It downloads the latest release for your system, checks its SHA-256, installs `messaging-mcp` and its WhatsApp bridge in `~/.local/bin`, registers the server in Claude Code and Codex when they are installed, and asks whether you want to approve messages in your assistant's prompt. Then open a new session and ask: *"set up messaging-mcp and send me a hi on Telegram"*. The script's settings (version, folder, skipping registration) are at the top of [`install.sh`](install.sh).
+It downloads the latest release for your system, checks its SHA-256, installs `messaging-mcp` and its WhatsApp bridge in `~/.local/bin`, registers the server in Claude Code and Codex when they are installed, and asks how you want to approve each message: by answering your assistant in the chat, in its permission prompt, or in a terminal. Then open a new session and ask: *"set up messaging-mcp and send me a hi on Telegram"*. The script's settings (version, folder, skipping registration) are at the top of [`install.sh`](install.sh).
 
 From source, with Rust and Go:
 

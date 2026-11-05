@@ -1,7 +1,8 @@
 //! `messaging-mcp approval`: the owner chooses how live messages are approved. Turning on
 //! `client-prompt` also makes Claude Code (an "ask" rule) and Codex (`approval_mode = "prompt"`)
-//! ask before `send_message`, so an auto-approving mode cannot skip the prompt. Run by the owner (or the installer, after asking them),
-//! never by an MCP tool.
+//! ask before `send_message`, so an auto-approving mode cannot skip the prompt; `agent` takes both
+//! out again, since the yes is then given in the chat. Run by the owner (or the installer, after
+//! asking them), never by an MCP tool.
 
 use std::path::{Path, PathBuf};
 
@@ -44,6 +45,31 @@ pub fn add_claude_ask_rule(settings: &Path) -> Result<bool, Error> {
         return Ok(false);
     }
     list.push(json!(CLAUDE_ASK_RULE));
+    let mut text = serde_json::to_string_pretty(&root).map_err(|_| settings_error())?;
+    text.push('\n');
+    write_private_file(settings, text.as_bytes())?;
+    Ok(true)
+}
+
+/// Removes the ask rule from Claude Code's settings, keeping everything else. Returns whether it
+/// removed it.
+pub fn remove_claude_ask_rule(settings: &Path) -> Result<bool, Error> {
+    let Ok(text) = std::fs::read_to_string(settings) else {
+        return Ok(false);
+    };
+    let mut root: Value = serde_json::from_str(&text).map_err(|_| settings_error())?;
+    let Some(list) = root
+        .get_mut("permissions")
+        .and_then(|permissions| permissions.get_mut("ask"))
+        .and_then(Value::as_array_mut)
+    else {
+        return Ok(false);
+    };
+    let before = list.len();
+    list.retain(|rule| rule != CLAUDE_ASK_RULE);
+    if list.len() == before {
+        return Ok(false);
+    }
     let mut text = serde_json::to_string_pretty(&root).map_err(|_| settings_error())?;
     text.push('\n');
     write_private_file(settings, text.as_bytes())?;
@@ -98,7 +124,46 @@ pub fn set_codex_prompt(config: &Path) -> Result<bool, Error> {
     Ok(true)
 }
 
-/// Sets the approval mode in the config and, for `client-prompt`, Claude Code's ask rule.
+/// Removes the prompt set by [`set_codex_prompt`], keeping the rest. Returns whether it changed
+/// anything.
+pub fn unset_codex_prompt(config: &Path) -> Result<bool, Error> {
+    let Ok(text) = std::fs::read_to_string(config) else {
+        return Ok(false);
+    };
+    let mut document: toml_edit::DocumentMut = text.parse().map_err(|_| codex_error())?;
+    let Some(server) = document
+        .get_mut("mcp_servers")
+        .and_then(|servers| servers.get_mut("messaging-mcp"))
+        .and_then(toml_edit::Item::as_table_like_mut)
+    else {
+        return Ok(false);
+    };
+    let Some(tools) = server
+        .get_mut("tools")
+        .and_then(toml_edit::Item::as_table_like_mut)
+    else {
+        return Ok(false);
+    };
+    let Some(send) = tools
+        .get_mut("send_message")
+        .and_then(toml_edit::Item::as_table_like_mut)
+    else {
+        return Ok(false);
+    };
+    if send.remove("approval_mode").is_none() {
+        return Ok(false);
+    }
+    if send.is_empty() {
+        tools.remove("send_message");
+    }
+    if tools.is_empty() {
+        server.remove("tools");
+    }
+    write_private_file(config, document.to_string().as_bytes())?;
+    Ok(true)
+}
+
+/// Sets the approval mode in the config and the clients' prompts that go with it.
 pub fn set_approval(
     config_path: &Path,
     approval: Approval,
@@ -112,7 +177,13 @@ pub fn set_approval(
             "settings": settings,
             "askRuleAdded": add_claude_ask_rule(&settings)?,
         }),
-        (Approval::ClientPrompt, None) => json!("Claude Code not found; nothing to change there."),
+        (Approval::Agent, Some(settings)) => json!({
+            "settings": settings,
+            "askRuleRemoved": remove_claude_ask_rule(&settings)?,
+        }),
+        (Approval::ClientPrompt | Approval::Agent, None) => {
+            json!("Claude Code not found; nothing to change there.")
+        }
         (Approval::Terminal | Approval::Dialog, _) => json!("unchanged"),
     };
     let codex = match (approval, codex_config(env)) {
@@ -120,7 +191,13 @@ pub fn set_approval(
             "config": path,
             "promptAdded": set_codex_prompt(&path)?,
         }),
-        (Approval::ClientPrompt, None) => json!("Codex not found; nothing to change there."),
+        (Approval::Agent, Some(path)) => json!({
+            "config": path,
+            "promptRemoved": unset_codex_prompt(&path)?,
+        }),
+        (Approval::ClientPrompt | Approval::Agent, None) => {
+            json!("Codex not found; nothing to change there.")
+        }
         (Approval::Terminal | Approval::Dialog, _) => json!("unchanged"),
     };
     let mut clients = json!({ "claudeCode": claude, "codex": codex });
@@ -130,6 +207,14 @@ pub fn set_approval(
             "Answer these prompts yourself: in Codex, keep 'Ask for approval' (not 'Approve for \
              me'), and never choose 'always allow' for send_message in either client. An \
              automatic reviewer or an always-allow would send without asking you."
+        );
+    }
+    if approval == Approval::Agent {
+        // Nothing outside the agent checks a live send any more.
+        clients["warning"] = json!(
+            "Messages now go out when your assistant decides you said yes in the chat. It is told \
+             to show each message and wait for you, but a mistake or a message it reads could \
+             make it send to anyone you allowed. Keep the allowed list short."
         );
     }
     Ok((config, clients))

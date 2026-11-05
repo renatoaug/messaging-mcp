@@ -52,3 +52,4 @@ What this makes easier, what it makes harder, what to watch. (bullets)
 | [ADR-007](ADR-007-agent-runs-setup.md) | The agent runs the setup; the owner approves each live message in their client | Accepted (bridge part superseded by ADR-008) |
 | [ADR-008](ADR-008-own-whatsapp-bridge.md) | Our own WhatsApp bridge, on whatsmeow | Accepted |
 | [ADR-009](ADR-009-approval-is-the-mode-the-owner-chose.md) | A live message is approved by the one mode the owner chose | Accepted |
+| [ADR-010](ADR-010-the-agent-can-be-the-approval.md) | The owner can let the agent's chat confirmation be the approval | Accepted |

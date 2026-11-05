@@ -286,3 +286,20 @@ async fn a_send_that_does_not_repeat_the_prepared_message_is_refused() {
     assert!(shown.lock().unwrap().is_empty());
     client.cancel().await.unwrap();
 }
+
+#[tokio::test]
+async fn in_agent_mode_the_call_sends_without_any_dialog() {
+    let dir = tempfile::tempdir().unwrap();
+    let shown = Arc::new(Mutex::new(Vec::new()));
+    let approver = Approver {
+        answer: Some(false),
+        shown: shown.clone(),
+    };
+    let client = connect_with(dir.path(), approver, "agent").await;
+    let (result, is_error) = prepare_and_send(&client).await;
+    // Approved by the call, then refused by the unusable session before any network call.
+    assert!(!is_error, "{result}");
+    assert_eq!(result["error"]["code"], "TELEGRAM_UNAVAILABLE");
+    assert!(shown.lock().unwrap().is_empty());
+    client.cancel().await.unwrap();
+}
