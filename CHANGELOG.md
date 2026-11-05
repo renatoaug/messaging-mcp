@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.0](https://github.com/renatoaug/messaging-mcp/compare/v0.2.1...v0.3.0) (2026-11-05)
+
+### Features
+
+* add a one-command installer and an approval command ([3de17e9](https://github.com/renatoaug/messaging-mcp/commit/3de17e9395ce80a410c13b1621243eba5855ddc4))
+
 ## [0.2.1](https://github.com/renatoaug/messaging-mcp/compare/v0.2.0...v0.2.1) (2026-11-05)
 
 ## [0.2.0](https://github.com/renatoaug/messaging-mcp/compare/v0.1.1...v0.2.0) (2026-11-05)
