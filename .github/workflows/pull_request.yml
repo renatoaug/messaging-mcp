@@ -35,6 +35,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: whatsapp-bridge/go.mod
+          cache-dependency-path: whatsapp-bridge/go.sum # the module is not at the root
 
       - uses: taiki-e/install-action@v2
         with:
