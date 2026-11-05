@@ -30,7 +30,7 @@ No variable is needed: without `--config` or `MESSAGING_MCP_CONFIG`, the binary 
 
 | Step | Tool | What the owner does |
 |---|---|---|
-| 1. Create the Telegram app at my.telegram.org | a browser the assistant drives, then `telegram_set_credentials` | Signs in on the page or reads the code Telegram sends to their app |
+| 1. Create the Telegram app at my.telegram.org | a browser the assistant drives, then `telegram_set_credentials` | Signs in on the page or reads the code Telegram sends to their app. Without such a browser: creates the app and runs `messaging-mcp telegram-credentials`, which asks for the hash hidden |
 | 2. Log in to Telegram | `telegram_login`, called until it says `logged_in` | Scans the QR page (Telegram > Settings > Devices > Link Desktop Device). With a 2FA password: runs `messaging-mcp telegram-password` and types it |
 | 3. Start and pair WhatsApp | `whatsapp_setup`, then `whatsapp_status` | Scans the QR page (WhatsApp > Settings > Linked devices > Link a device) |
 | 4. Go live | `set_mode` with `live` | Turns on approval (below) |
@@ -45,9 +45,9 @@ The Telegram API hash is written to `telegram-api-hash` (0600) and never returne
 `send_message` repeats the plan's recipient and whole text; the server refuses a mismatch. Who says yes, in order:
 
 1. **The client's approval dialog** (MCP elicitation), when the client offers one. Claude Code did not on 2026-11-05.
-2. **The client's permission prompt**, with `"approval": "client-prompt"` in the config. The prompt shows the destination and the text. `messaging-mcp approval client-prompt` sets it and adds Claude Code's rule; the installer offers to run it. Keep the prompt on:
+2. **The client's permission prompt**, with `"approval": "client-prompt"` in the config. The prompt shows the destination and the text. `messaging-mcp approval client-prompt` sets it and the two client settings below; the installer offers to run it. Keep the prompt on:
    - Claude Code, in `~/.claude/settings.json`: `{ "permissions": { "ask": ["mcp__messaging-mcp__send_message"] } }`. This also holds in auto mode. Never choose "always allow" on this prompt.
-   - Codex, in `~/.codex/config.toml`: `default_tools_approval_mode = "prompt"` under `[mcp_servers.messaging-mcp]`.
+   - Codex, in `~/.codex/config.toml`: `approval_mode = "prompt"` under `[mcp_servers.messaging-mcp.tools.send_message]`. The command edits that file keeping your comments and the rest of it.
 3. **The terminal**, the default (`"approval": "terminal"`): `messaging-mcp approve <planId>`.
 
 ## The config file
@@ -89,5 +89,5 @@ Every step also works from a terminal: `messaging-mcp telegram-login` (phone cod
 
 ## Still open
 
-- [ ] Entering the Telegram credentials without a browser the assistant can drive: a `messaging-mcp telegram-credentials` command that asks for them hidden, so the hash never goes through the chat.
+- [x] Entering the Telegram credentials without a browser the assistant can drive → `messaging-mcp telegram-credentials`.
 - [ ] Moving from the TypeScript version: its Telegram session file is not compatible, and its state directory (`.bridge-state`) is not read.

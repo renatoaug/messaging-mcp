@@ -130,11 +130,21 @@ impl ChannelAdapter for WhatsAppAdapter {
             .body(json!({ "recipient": target, "message": text }).to_string())
             .send()
             .await
-            .map_err(|_| {
-                uncertain(
-                    "WhatsApp request timed out or failed. It may have been sent. Verify the \
-                     chat; do not retry automatically.",
-                )
+            .map_err(|error| {
+                // No connection was made, so the bridge never saw the request.
+                if error.is_connect() {
+                    DeliveryError::new(
+                        "WHATSAPP_BRIDGE_DOWN",
+                        "The WhatsApp bridge is not running. Nothing was sent. Call \
+                         whatsapp_setup to start it again; it reconnects without a QR code.",
+                        Outcome::NotSent,
+                    )
+                } else {
+                    uncertain(
+                        "WhatsApp request timed out or failed. It may have been sent. Verify \
+                         the chat; do not retry automatically.",
+                    )
+                }
             })?;
         let status = response.status();
         if !status.is_success() {

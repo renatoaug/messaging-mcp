@@ -209,6 +209,10 @@ pub async fn supervise(paths: &BridgePaths, port: u16, page: &Path) -> Result<()
         break exit;
     };
     let _ = write_private_file(page, final_page(exit).as_bytes());
-    let _ = fs::remove_file(paths.pid());
+    // Another supervisor may have started meanwhile; never remove its pid file.
+    if fs::read_to_string(paths.pid()).is_ok_and(|pid| pid.trim() == std::process::id().to_string())
+    {
+        let _ = fs::remove_file(paths.pid());
+    }
     Ok(())
 }

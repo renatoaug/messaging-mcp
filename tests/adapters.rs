@@ -371,3 +371,22 @@ fn contact_names_lose_control_characters_and_stay_short() {
     assert_eq!(clean_name("Ma\u{1b}[2Jria\n"), "Ma[2Jria");
     assert_eq!(clean_name(&"a".repeat(300)).len(), 100);
 }
+
+#[tokio::test]
+async fn a_bridge_that_is_not_running_means_nothing_was_sent() {
+    // A port that was free a moment ago: nothing listens there.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    let error = adapter(
+        format!("http://127.0.0.1:{port}/api"),
+        Ok(TOKEN.to_string()),
+    )
+    .send(&wa_recipient(), "hi", "plan")
+    .await
+    .unwrap_err();
+    assert_eq!(
+        (error.code, error.outcome),
+        ("WHATSAPP_BRIDGE_DOWN", Outcome::NotSent)
+    );
+}

@@ -36,7 +36,9 @@ const CREATE_TELEGRAM_APP: &str = "Create a Telegram API application: open https
 in a browser, sign in with the user's phone number (Telegram sends the code to the user's \
 Telegram app, so ask the user for it), open API development tools, create an application with any \
 title and short name, then call telegram_set_credentials with its api_id and api_hash. Never show \
-the api_hash to the user or anyone else.";
+the api_hash to the user or anyone else. If you cannot drive a browser, ask the user to create the \
+app themselves and run `messaging-mcp telegram-credentials` in their own terminal; never ask for \
+the api_hash in chat.";
 
 fn setup_error(code: &'static str, message: impl Into<String>) -> Error {
     Error::new(code, message)

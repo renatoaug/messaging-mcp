@@ -345,7 +345,11 @@ fn approval_and_allow_refuse_a_pipe_and_change_nothing() {
         "Ana",
     ];
     assert_eq!(structured_error(&f.run(&allow))["code"], "TTY_REQUIRED");
-    for command in ["telegram-login", "telegram-password"] {
+    for command in [
+        "telegram-login",
+        "telegram-password",
+        "telegram-credentials",
+    ] {
         assert_eq!(structured_error(&f.run(&[command]))["code"], "TTY_REQUIRED");
     }
     assert_eq!(f.json(&["recipients"]).as_array().unwrap().len(), 2);
@@ -383,14 +387,19 @@ fn approval_client_prompt_adds_the_claude_ask_rule_once_and_keeps_other_settings
     let settings = claude.join("settings.json");
     let before = json!({ "theme": "dark", "permissions": { "allow": ["Bash(ls)"] } });
     std::fs::write(&settings, before.to_string()).unwrap();
+    let codex = f.dir.path().join(".codex");
+    std::fs::create_dir(&codex).unwrap();
+    let codex_config = codex.join("config.toml");
+    let codex_before = "# my settings\nmodel = \"o3\"\n\n[mcp_servers.messaging-mcp]\ncommand = \"/bin/messaging-mcp\"\nargs = [\"mcp\"]\n";
+    std::fs::write(&codex_config, codex_before).unwrap();
 
     let first = f.json(&["approval", "client-prompt"]);
     assert_eq!(first["approval"], "client-prompt");
-    assert_eq!(first["claudeCode"]["askRuleAdded"], true);
-    assert_eq!(
-        f.json(&["approval", "client-prompt"])["claudeCode"]["askRuleAdded"],
-        false
-    );
+    assert_eq!(first["clients"]["claudeCode"]["askRuleAdded"], true);
+    assert_eq!(first["clients"]["codex"]["promptAdded"], true);
+    let second = f.json(&["approval", "client-prompt"]);
+    assert_eq!(second["clients"]["claudeCode"]["askRuleAdded"], false);
+    assert_eq!(second["clients"]["codex"]["promptAdded"], false);
 
     let after: Value = serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
     assert_eq!(after["theme"], "dark");
@@ -398,6 +407,21 @@ fn approval_client_prompt_adds_the_claude_ask_rule_once_and_keeps_other_settings
     assert_eq!(
         after["permissions"]["ask"],
         json!(["mcp__messaging-mcp__send_message"])
+    );
+
+    let codex_after = std::fs::read_to_string(&codex_config).unwrap();
+    assert!(
+        codex_after.starts_with("# my settings\nmodel = \"o3\""),
+        "{codex_after}"
+    );
+    assert!(
+        codex_after
+            .contains("[mcp_servers.messaging-mcp.tools.send_message]\napproval_mode = \"prompt\""),
+        "{codex_after}"
+    );
+    assert!(
+        !codex_after.contains("[mcp_servers.messaging-mcp.tools]\n"),
+        "{codex_after}"
     );
 
     assert_eq!(f.json(&["approval", "terminal"])["approval"], "terminal");

@@ -6,7 +6,7 @@ Updated: 2026-11-05
 
 ## The offline suite
 
-`cargo test` runs 56 tests in `tests/`, grouped by area:
+`cargo test` runs 59 tests in `tests/`, grouped by area:
 
 | File | Covers |
 |---|---|
@@ -37,10 +37,11 @@ Telegram, 2026-11-05, with Claude Code: the agent created the app at my.telegram
 
 WhatsApp, 2026-11-05, with Claude Code, through our own bridge ([ADR-008](../decisions/ADR-008-own-whatsapp-bridge.md)): `whatsapp_setup` started it, the pairing page worked, the first attempt timed out before the scan and the second paired; the agent allowed the owner's own number and sent one message after approval. Surprises, now fixed: a pairing attempt lasts only about 2.5 minutes, so the supervisor now starts it again up to 4 times; `whatsapp_status` returned at once instead of waiting for the scan. Before this, Claude Code's auto mode refused to let the agent clone and build the third-party bridge, which led to our own.
 
+Contact search, 2026-11-05: Telegram's `contacts.search` returned none of the owner's address book contacts, only global directory results, so search now filters the address book locally (tested offline in `identity.rs`).
+
 What is left, in this order, stopping at the first surprise:
 
-1. Search: ask the assistant to find a Telegram contact, check the list is only your own contacts and chats.
-2. Codex: the same sends, checking that its prompt shows the destination and the text.
+1. Codex: the same sends, checking that its prompt shows the destination and the text.
 
 Record what happened in this note, and turn each surprise into a test.
 

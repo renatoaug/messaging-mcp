@@ -6,7 +6,7 @@ Updated: 2026-11-05
 
 ## Credentials and the session
 
-1. **The app.** The assistant opens [my.telegram.org](https://my.telegram.org) in a browser it can drive. You sign in there (the code arrives in your Telegram app). It opens API development tools, creates an app ("Messaging MCP", platform Desktop), reveals the `api_hash`, calls `telegram_set_credentials` and hides the hash again. The hash goes to `telegram-api-hash` (0600) and is never returned. Telegram allows one app per account.
+1. **The app.** Without a browser the assistant can drive, you create the app yourself and run `messaging-mcp telegram-credentials`: it asks for the `api_id`, then the `api_hash` hidden. With one, the assistant opens [my.telegram.org](https://my.telegram.org) in a browser it can drive. You sign in there (the code arrives in your Telegram app). It opens API development tools, creates an app ("Messaging MCP", platform Desktop), reveals the `api_hash`, calls `telegram_set_credentials` and hides the hash again. The hash goes to `telegram-api-hash` (0600) and is never returned. Telegram allows one app per account.
 2. **The login.** `telegram_login` asks Telegram for a login token (`auth.exportLoginToken`), draws it as a QR code on a page in `~/Downloads`, and waits. You scan it in Telegram → Settings → Devices → Link Desktop Device. Tokens expire in about 30 seconds; the server asks for a new one and redraws the page, and notices the scan through Telegram's `updateLoginToken`. A token from another datacenter is imported there (`auth.importLoginToken`).
 3. **A 2FA password**, if the account has one: the server saves the half-done session as `telegram-pending-session.json` (0600) and tells the agent to ask you to run `messaging-mcp telegram-password` in your terminal. You type the password hidden; it never passes through the chat.
 4. **The result**: the session file and `telegram.expectedUserId` are written, and the page turns into "You're connected". A session saved without its user ID (a reconnect at the wrong moment) is adopted on the next `telegram_login`: the server asks Telegram whose session it is instead of asking for a new scan.
@@ -39,7 +39,9 @@ The receipt's message ID comes only from the update that carries our `random_id`
 
 ## Finding and allowing people
 
-`search_contacts` (MCP) and `messaging-mcp allow telegram QUERY --id ID` (CLI) call `contacts.search` and keep only `my_results`: your contacts and chats, never Telegram's global directory. They run only in live mode, take 2–64 characters and return up to 20 results.
+`search_contacts` (MCP) and `messaging-mcp allow telegram QUERY --id ID` (CLI) read your address book (`contacts.getContacts`) and keep the people whose name or username contains every word of the query, ignoring case and accents ("joao" finds "João"). Then they add your chats and channels from `contacts.search`, its `my_results` only, never Telegram's global directory. They run only in live mode, take 2–64 characters and return up to 20 results.
+
+On 2026-11-05, `contacts.search` returned none of the owner's 78 address book contacts in `my_results`, even for common names, only global results; hence the address book is filtered here.
 
 They drop yourself, deleted accounts, bots, and peers without a full access hash. Names have control characters removed and are cut to 100 characters. The agent sees:
 
@@ -58,7 +60,7 @@ From the assistant, `allow_recipient` with the result's `reference` (`user:42`) 
 ## Still open
 
 - [x] A QR login and a send to Saved Messages against a real account → done on 2026-11-05.
-- [ ] A contact search against a real account.
+- [x] A contact search against a real account → done on 2026-11-05, which led to filtering the address book here.
 - [ ] `telegram-login` (phone code) and `telegram-password` against a real account.
 - [ ] Tell Telegram's definite rejections (for example `PEER_ID_INVALID`) apart from uncertain errors, so they become `failed`.
 - [ ] Datacenter migration during a send is not handled: a session whose home datacenter moved fails as uncertain.

@@ -33,7 +33,9 @@ The bridge exits with code 4 when a pairing times out unscanned, and 5 when the 
 4. **Pair**: you scan the page in WhatsApp → Settings → Linked devices → Link a device. WhatsApp offers about 2.5 minutes of codes per attempt; the supervisor starts a timed-out pairing again up to 4 times, so you have about 10 minutes. The page turns into "You're connected" when it works, or "The code expired" after that.
 5. **Confirm**: `whatsapp_status` waits up to 25 seconds for `/api/health` to report connected and paired, then sets `whatsapp.accountLabel` to the paired number the bridge reports.
 
-`whatsapp_stop` (or `messaging-mcp whatsapp-bridge-stop`) stops the supervisor and the bridge; the pairing stays, so the next start reconnects without a QR code. If you pair another account, our plans stop being sendable, because they are bound to the bridge token.
+`whatsapp_stop` (or `messaging-mcp whatsapp-bridge-stop`) stops the supervisor and the bridge; the pairing stays, so the next start reconnects without a QR code.
+
+When an MCP client starts its `messaging-mcp mcp` process and the bridge was paired before (`whatsapp.accountLabel` is set and `store/session.db` exists) but is not running, for example after the machine restarted, the server starts it again, with no QR code. If a send finds the bridge down anyway, the connection is refused before any request, so the plan is `failed` with `WHATSAPP_BRIDGE_DOWN`, never uncertain. Only the supervisor that wrote `bridge.pid` removes it, so two clients starting at once do not lose track of the running one. If you pair another account, our plans stop being sendable, because they are bound to the bridge token.
 
 ## Allowing people
 
@@ -47,6 +49,6 @@ A JID is the country code and number, then `@s.whatsapp.net`. Some Brazilian acc
 
 ## Still open
 
-- [ ] Restarting the bridge after the machine restarts: nothing does yet; call `whatsapp_setup` again.
+- [x] Restarting the bridge after the machine restarts → the MCP server resumes a paired bridge when it starts.
 - [ ] A contact search: `whatsmeow` can read the account's contacts; not built.
 - [ ] Replacing the bridge with an in-process Rust client, which would remove the second binary ([ADR-008](../decisions/ADR-008-own-whatsapp-bridge.md)).

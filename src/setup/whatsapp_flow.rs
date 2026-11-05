@@ -98,6 +98,30 @@ impl Setup {
         }
     }
 
+    /// Starts the bridge again when it was paired before and is not running, for example after
+    /// the machine restarted. It reconnects without a QR code. A bridge that never finished
+    /// pairing is left alone, so no QR page appears unasked.
+    pub fn resume_whatsapp(&self, config: &Config) {
+        let paired_before = config
+            .whatsapp
+            .as_ref()
+            .is_some_and(|whatsapp| whatsapp.account_label.is_some());
+        let bridge = self.bridge();
+        let session = bridge.store().join("session.db");
+        let installed = std::env::current_exe()
+            .ok()
+            .and_then(|exe| bridge_binary(&exe))
+            .is_some_and(|binary| binary.is_file());
+        if paired_before
+            && installed
+            && session.is_file()
+            && bridge_process::running_pid(&bridge).is_none()
+        {
+            let page = self.downloads.join(WHATSAPP_PAGE);
+            let _ = bridge_process::start(&bridge, &self.config_path, &page);
+        }
+    }
+
     /// Records which account is paired, as the bridge reports it.
     fn whatsapp_connected(&self, jid: &str) -> Result<Value, Error> {
         let account = phone_from_jid(jid);

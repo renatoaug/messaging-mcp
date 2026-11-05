@@ -218,3 +218,21 @@ fn search_results_come_only_from_the_owners_own_chats() {
     assert_eq!(contacts.len(), 1);
     assert_eq!(contacts[0].peer, TelegramPeer::Chat { id: "9".into() });
 }
+
+#[test]
+fn address_book_search_ignores_case_and_accents_and_needs_every_word() {
+    use messaging_mcp::adapters::telegram::{fold, user_matches};
+    assert_eq!(fold("João Ávila"), "joao avila");
+    let joao = UserFacts {
+        first_name: Some("João"),
+        last_name: Some("Ávila"),
+        username: Some("jav"),
+        ..person()
+    };
+    for query in ["joao", "JOÃO", "avila", "joao avi", "jav"] {
+        assert!(user_matches(&joao, query), "{query}");
+    }
+    for query in ["maria", "joao silva", "   "] {
+        assert!(!user_matches(&joao, query), "{query}");
+    }
+}

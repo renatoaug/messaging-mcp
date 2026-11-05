@@ -94,6 +94,9 @@ enum Command {
     TelegramLogin,
     /// Human-only: type the Telegram 2FA password to finish the agent's QR login.
     TelegramPassword,
+    /// Human-only: enter the Telegram app's api_id and api_hash (hidden) from my.telegram.org,
+    /// when your assistant cannot use a browser.
+    TelegramCredentials,
     /// Stop the WhatsApp bridge. The pairing is kept.
     WhatsappBridgeStop,
     /// Choose how live messages are approved: in your assistant's prompt (client-prompt, which
@@ -317,6 +320,23 @@ async fn run_setup_command(command: &Command, path: &std::path::Path) -> Result<
         Command::TelegramPassword => {
             telegram_login::finish_with_password(&load_config_from(path)?, path).await?;
         }
+        Command::TelegramCredentials => {
+            require_terminal("Entering Telegram credentials")?;
+            println!(
+                "From https://my.telegram.org > API development tools. The hash is typed hidden \
+                 and saved to a private file."
+            );
+            let api_id = ask("api_id: ")?
+                .trim()
+                .parse::<i32>()
+                .map_err(|_| Error::new("TELEGRAM_CREDENTIALS_INVALID", "api_id is a number."))?;
+            let api_hash = rpassword::prompt_password("api_hash (hidden): ")
+                .map_err(|_| Error::new("TTY_REQUIRED", "Could not read from the terminal."))?;
+            Setup::new(path, &process_env)?.set_telegram_credentials(api_id, &api_hash)?;
+            print_json(
+                &json!({ "saved": true, "next": "Ask your assistant to run telegram_login." }),
+            )?;
+        }
         Command::WhatsappBridgeStop => {
             print_json(&json!({ "stopped": bridge_process::stop(&bridge()) }))?;
         }
@@ -325,8 +345,8 @@ async fn run_setup_command(command: &Command, path: &std::path::Path) -> Result<
                 ApprovalMode::ClientPrompt => Approval::ClientPrompt,
                 ApprovalMode::Terminal => Approval::Terminal,
             };
-            let (config, claude) = approval::set_approval(path, approval, &process_env)?;
-            print_json(&json!({ "approval": config.approval, "claudeCode": claude }))?;
+            let (config, clients) = approval::set_approval(path, approval, &process_env)?;
+            print_json(&json!({ "approval": config.approval, "clients": clients }))?;
         }
         Command::WhatsappBridgeSupervise { page } => {
             let config = load_config_from(path)?;
@@ -349,7 +369,11 @@ async fn run(cli: Cli) -> Result<ExitCode, Error> {
     }
     let service = create_app(load_config_from(&path)?)?;
     match cli.command {
-        Command::Mcp => serve_mcp(service, Setup::new(&path, &process_env)?).await?,
+        Command::Mcp => {
+            let setup = Setup::new(&path, &process_env)?;
+            setup.resume_whatsapp(service.config());
+            serve_mcp(service, setup).await?;
+        }
         Command::Doctor => print_json(&status_report(&service))?,
         Command::Recipients => print_json(&service.list_recipients()?)?,
         Command::Prepare(args) => prepare(&service, args)?,
@@ -373,6 +397,7 @@ async fn run(cli: Cli) -> Result<ExitCode, Error> {
         }
         Command::TelegramLogin
         | Command::TelegramPassword
+        | Command::TelegramCredentials
         | Command::WhatsappBridgeStop
         | Command::Approval { .. }
         | Command::WhatsappBridgeSupervise { .. } => {}

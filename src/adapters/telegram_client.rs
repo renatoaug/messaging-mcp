@@ -12,8 +12,8 @@ use grammers_tl_types as tl;
 use tokio::task::JoinHandle;
 
 use crate::adapters::telegram::{
-    StoredSession, TelegramTransport, TransportError, contacts_from_found, input_peer,
-    read_credentials, receipt_from, send_request,
+    StoredSession, TelegramTransport, TransportError, contacts_from_address_book,
+    contacts_from_found, input_peer, read_credentials, receipt_from, send_request,
 };
 use crate::config::{TelegramConfig, TelegramPeer};
 use crate::error::{DeliveryError, Error, Outcome};
@@ -166,7 +166,22 @@ impl TelegramTransport for GrammersTransport {
         Ok(receipt_from(&updates, random_id))
     }
 
+    /// The owner's address book, filtered here, then their chats and channels from Telegram's
+    /// search. Telegram's search did not return address book people on 2026-11-05, only the
+    /// global directory, which is never used.
     async fn search(&self, query: &str, limit: i32) -> Result<Vec<Contact>, TransportError> {
+        let max = usize::try_from(limit).unwrap_or(20);
+        let book = self
+            .client
+            .invoke(&tl::functions::contacts::GetContacts { hash: 0 })
+            .await
+            .map_err(|_| TransportError::Failed)?;
+        let mut contacts = match book {
+            tl::enums::contacts::Contacts::Contacts(book) => {
+                contacts_from_address_book(&book.users, query, max)
+            }
+            tl::enums::contacts::Contacts::NotModified => Vec::new(),
+        };
         let request = tl::functions::contacts::Search {
             broadcasts: true,
             bots: false,
@@ -178,7 +193,13 @@ impl TelegramTransport for GrammersTransport {
             .invoke(&request)
             .await
             .map_err(|_| TransportError::Failed)?;
-        Ok(contacts_from_found(&found))
+        for contact in contacts_from_found(&found) {
+            let known = contacts.iter().any(|c| c.reference == contact.reference);
+            if !known && contacts.len() < max {
+                contacts.push(contact);
+            }
+        }
+        Ok(contacts)
     }
 
     async fn close(&self) -> Result<(), TransportError> {

@@ -29,7 +29,7 @@ Rust for `messaging-mcp`: MCP through the official Rust SDK (`rmcp`), Telegram t
 - macOS or Linux. Windows is not supported.
 - `curl` and `tar` for the installer, or [Rust](https://rustup.rs) stable and [Go](https://go.dev) to build from source.
 - For WhatsApp: the `messaging-mcp-whatsapp-bridge` binary next to `messaging-mcp`. Releases include it; from source, build it with [Go](https://go.dev): `cd whatsapp-bridge && go build -o ~/.local/bin/messaging-mcp-whatsapp-bridge .`
-- To let the assistant create the Telegram app itself: a browser it can drive, such as the Claude in Chrome extension.
+- To let the assistant create the Telegram app itself: a browser it can drive, such as the Claude in Chrome extension. Without one, you create the app and run `messaging-mcp telegram-credentials`.
 
 ## Running
 

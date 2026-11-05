@@ -430,6 +430,56 @@ pub fn chat_contact(chat: &tl::enums::Chat) -> Option<Contact> {
     }
 }
 
+/// Lowercase with the common Latin accents removed, so "joao" finds "João".
+pub fn fold(text: &str) -> String {
+    text.chars()
+        .flat_map(char::to_lowercase)
+        .map(|c| match c {
+            'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' => 'a',
+            'ç' => 'c',
+            'è' | 'é' | 'ê' | 'ë' => 'e',
+            'ì' | 'í' | 'î' | 'ï' => 'i',
+            'ñ' => 'n',
+            'ò' | 'ó' | 'ô' | 'õ' | 'ö' => 'o',
+            'ù' | 'ú' | 'û' | 'ü' => 'u',
+            'ý' | 'ÿ' => 'y',
+            other => other,
+        })
+        .collect()
+}
+
+/// Whether a person in the owner's address book matches the query: every word of the query
+/// appears in their name or username, ignoring case and accents.
+pub fn user_matches(user: &UserFacts<'_>, query: &str) -> bool {
+    let haystack = fold(
+        &[user.first_name, user.last_name, user.username]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" "),
+    );
+    let words: Vec<String> = fold(query).split_whitespace().map(str::to_string).collect();
+    !words.is_empty() && words.iter().all(|word| haystack.contains(word.as_str()))
+}
+
+/// The owner's address book entries that match `query`, as contacts (at most `limit`).
+pub fn contacts_from_address_book(
+    users: &[tl::enums::User],
+    query: &str,
+    limit: usize,
+) -> Vec<Contact> {
+    users
+        .iter()
+        .filter_map(|user| match user {
+            tl::enums::User::User(user) => Some(facts(user)),
+            tl::enums::User::Empty(_) => None,
+        })
+        .filter(|user| user_matches(user, query))
+        .filter_map(|user| user_contact(&user))
+        .take(limit)
+        .collect()
+}
+
 /// Reads only `my_results`: the owner's own contacts and chats, never the global directory.
 pub fn contacts_from_found(found: &tl::types::contacts::Found) -> Vec<Contact> {
     let find_user = |wanted: i64| {

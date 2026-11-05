@@ -1,6 +1,6 @@
 //! `messaging-mcp approval`: the owner chooses how live messages are approved. Turning on
-//! `client-prompt` also adds Claude Code's "ask" rule for `send_message`, so the prompt cannot be
-//! skipped by an auto-approving mode. Run by the owner (or the installer, after asking them),
+//! `client-prompt` also makes Claude Code (an "ask" rule) and Codex (`approval_mode = "prompt"`)
+//! ask before `send_message`, so an auto-approving mode cannot skip the prompt. Run by the owner (or the installer, after asking them),
 //! never by an MCP tool.
 
 use std::path::{Path, PathBuf};
@@ -50,6 +50,54 @@ pub fn add_claude_ask_rule(settings: &Path) -> Result<bool, Error> {
     Ok(true)
 }
 
+/// Codex's user config, when Codex is installed (its folder exists).
+pub fn codex_config(env: Env<'_>) -> Option<PathBuf> {
+    let dir = Path::new(&env("HOME")?).join(".codex");
+    dir.is_dir().then(|| dir.join("config.toml"))
+}
+
+fn codex_error() -> Error {
+    Error::new(
+        "CODEX_CONFIG_UNREADABLE",
+        "Codex's config.toml could not be read as TOML. Nothing was changed there.",
+    )
+}
+
+/// Makes Codex prompt before `send_message`, keeping the rest of its config and comments.
+/// Only when messaging-mcp is registered there. Returns whether it changed anything.
+pub fn set_codex_prompt(config: &Path) -> Result<bool, Error> {
+    let Ok(text) = std::fs::read_to_string(config) else {
+        return Ok(false);
+    };
+    let mut document: toml_edit::DocumentMut = text.parse().map_err(|_| codex_error())?;
+    let Some(server) = document
+        .get_mut("mcp_servers")
+        .and_then(|servers| servers.get_mut("messaging-mcp"))
+        .and_then(toml_edit::Item::as_table_like_mut)
+    else {
+        return Ok(false);
+    };
+    // An implicit table: only [mcp_servers.messaging-mcp.tools.send_message] is written.
+    let mut implicit = toml_edit::Table::new();
+    implicit.set_implicit(true);
+    let tools = server
+        .entry("tools")
+        .or_insert(toml_edit::Item::Table(implicit))
+        .as_table_like_mut()
+        .ok_or_else(codex_error)?;
+    let send = tools
+        .entry("send_message")
+        .or_insert(toml_edit::table())
+        .as_table_like_mut()
+        .ok_or_else(codex_error)?;
+    if send.get("approval_mode").and_then(toml_edit::Item::as_str) == Some("prompt") {
+        return Ok(false);
+    }
+    send.insert("approval_mode", toml_edit::value("prompt"));
+    write_private_file(config, document.to_string().as_bytes())?;
+    Ok(true)
+}
+
 /// Sets the approval mode in the config and, for `client-prompt`, Claude Code's ask rule.
 pub fn set_approval(
     config_path: &Path,
@@ -67,5 +115,13 @@ pub fn set_approval(
         (Approval::ClientPrompt, None) => json!("Claude Code not found; nothing to change there."),
         (Approval::Terminal, _) => json!("unchanged"),
     };
-    Ok((config, claude))
+    let codex = match (approval, codex_config(env)) {
+        (Approval::ClientPrompt, Some(path)) => json!({
+            "config": path,
+            "promptAdded": set_codex_prompt(&path)?,
+        }),
+        (Approval::ClientPrompt, None) => json!("Codex not found; nothing to change there."),
+        (Approval::Terminal, _) => json!("unchanged"),
+    };
+    Ok((config, json!({ "claudeCode": claude, "codex": codex })))
 }

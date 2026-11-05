@@ -17,7 +17,7 @@ Messaging MCP can send messages as you. Message content, web pages, contact name
 
 ## Important limits
 
-1. **`client-prompt` approval is only as strong as your client's prompt.** In Claude Code, keep `"ask": ["mcp__messaging-mcp__send_message"]` in your settings, and never choose "always allow" on that prompt. An auto-approving mode or an "always allow" lets the agent send without asking you. Codex: keep `default_tools_approval_mode = "prompt"` for this server.
+1. **`client-prompt` approval is only as strong as your client's prompt.** In Claude Code, keep `"ask": ["mcp__messaging-mcp__send_message"]` in your settings, and never choose "always allow" on that prompt. An auto-approving mode or an "always allow" lets the agent send without asking you. In Codex, keep `approval_mode = "prompt"` under `[mcp_servers.messaging-mcp.tools.send_message]`. `messaging-mcp approval client-prompt` sets both.
 2. **A terminal check does not tell a person from an agent with a shell.** A process running as your user can also edit the config, the ledger and the code, read secrets and call the providers directly. Do not give an untrusted agent unrestricted access to the machine. Strong isolation needs a separate user or service that holds the credentials, with approval out of the agent's reach. This version does not build that.
 3. **The paired WhatsApp account is reported by the bridge.** `whatsapp_setup` sets `accountLabel` from the number in `/api/health`. If you pair another account, generate a new bridge token. Never reuse a token across accounts.
 4. **The Telegram session file is full access to your account.** Do not copy it between machines. This project registers no update handlers and exposes no reading, but that does not reduce what the credential can do.
@@ -25,8 +25,9 @@ Messaging MCP can send messages as you. Message content, web pages, contact name
 6. **QR pages are written to `~/Downloads`** while you scan. Each turns into a result page when the login ends. A login QR is only useful to the device that created it, but delete the pages if you share that folder.
 7. **Pending messages are stored in clear text** in the private ledger. File permissions are not encryption. Keep the state directory on a protected volume, out of synced folders and shared backups. Nothing deletes old plans yet.
 8. **Accepted is not delivered.** Even after a timeout the provider may finish the send. There is no exactly-once delivery across the network.
-9. **The rate limit is local** to a state directory. It does not replace the services' own rules. Do not use this for bulk messages, contact harvesting or to get around blocks.
-10. **Config edits made by hand need a reconnect** of each MCP process (`/mcp` in Claude Code). Changes made through the setup tools and recipients added with `allow` take effect immediately.
+9. **The bridge comes back on its own.** When an MCP client starts and the bridge was paired before but is not running (after a restart, for example), the server starts it again; it reconnects without a QR code. A bridge that never finished pairing is not started unasked.
+10. **The rate limit is local** to a state directory. It does not replace the services' own rules. Do not use this for bulk messages, contact harvesting or to get around blocks.
+11. **Config edits made by hand need a reconnect** of each MCP process (`/mcp` in Claude Code). Changes made through the setup tools and recipients added with `allow` take effect immediately.
 
 ## Secrets
 
