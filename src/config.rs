@@ -172,8 +172,11 @@ pub enum Approval {
     Terminal,
     /// The client's own permission prompt for `send_message`, which shows the destination and
     /// the whole message because the call has to repeat them. The owner must keep that prompt
-    /// on (an "ask" rule); an "always allow" turns it off.
+    /// on (an "ask" rule); an "always allow" or an automatic reviewer turns it off.
     ClientPrompt,
+    /// MCP's approval dialog (elicitation), for clients that actually show it. Codex declares it
+    /// but declined it without showing anything on 2026-11-05, so it is never assumed.
+    Dialog,
 }
 
 fn default_max_sends() -> i64 {

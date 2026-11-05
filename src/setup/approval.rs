@@ -113,7 +113,7 @@ pub fn set_approval(
             "askRuleAdded": add_claude_ask_rule(&settings)?,
         }),
         (Approval::ClientPrompt, None) => json!("Claude Code not found; nothing to change there."),
-        (Approval::Terminal, _) => json!("unchanged"),
+        (Approval::Terminal | Approval::Dialog, _) => json!("unchanged"),
     };
     let codex = match (approval, codex_config(env)) {
         (Approval::ClientPrompt, Some(path)) => json!({
@@ -121,7 +121,16 @@ pub fn set_approval(
             "promptAdded": set_codex_prompt(&path)?,
         }),
         (Approval::ClientPrompt, None) => json!("Codex not found; nothing to change there."),
-        (Approval::Terminal, _) => json!("unchanged"),
+        (Approval::Terminal | Approval::Dialog, _) => json!("unchanged"),
     };
-    Ok((config, json!({ "claudeCode": claude, "codex": codex })))
+    let mut clients = json!({ "claudeCode": claude, "codex": codex });
+    if approval == Approval::ClientPrompt {
+        // The prompt is the yes only while a person answers it.
+        clients["warning"] = json!(
+            "Answer these prompts yourself: in Codex, keep 'Ask for approval' (not 'Approve for \
+             me'), and never choose 'always allow' for send_message in either client. An \
+             automatic reviewer or an always-allow would send without asking you."
+        );
+    }
+    Ok((config, clients))
 }

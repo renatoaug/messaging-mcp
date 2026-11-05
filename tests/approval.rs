@@ -81,7 +81,7 @@ fn live_config_with(dir: &Path, approval: &str) -> std::path::PathBuf {
 }
 
 async fn connect(dir: &Path, approver: Approver) -> RunningService<RoleClient, Approver> {
-    connect_with(dir, approver, "terminal").await
+    connect_with(dir, approver, "dialog").await
 }
 
 async fn connect_with(
@@ -178,6 +178,39 @@ async fn a_declined_message_is_not_sent_and_stays_pending() {
     assert!(is_error);
     assert_eq!(result["code"], "APPROVAL_DECLINED");
     assert_eq!(shown.lock().unwrap().len(), 1);
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
+async fn with_client_prompt_a_client_that_declares_the_dialog_is_not_asked_twice() {
+    // Codex declares the dialog but declines it unseen: the permission prompt is the approval.
+    let dir = tempfile::tempdir().unwrap();
+    let shown = Arc::new(Mutex::new(Vec::new()));
+    let approver = Approver {
+        answer: Some(false),
+        shown: shown.clone(),
+    };
+    let client = connect_with(dir.path(), approver, "client-prompt").await;
+    let (result, is_error) = prepare_and_send(&client).await;
+    assert!(!is_error, "{result}");
+    assert_eq!(result["error"]["code"], "TELEGRAM_UNAVAILABLE");
+    assert!(shown.lock().unwrap().is_empty());
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
+async fn in_terminal_mode_nothing_is_sent_from_the_client() {
+    let dir = tempfile::tempdir().unwrap();
+    let shown = Arc::new(Mutex::new(Vec::new()));
+    let approver = Approver {
+        answer: Some(true),
+        shown: shown.clone(),
+    };
+    let client = connect_with(dir.path(), approver, "terminal").await;
+    let (result, is_error) = prepare_and_send(&client).await;
+    assert!(is_error);
+    assert_eq!(result["code"], "APPROVAL_REQUIRED");
+    assert!(shown.lock().unwrap().is_empty());
     client.cancel().await.unwrap();
 }
 

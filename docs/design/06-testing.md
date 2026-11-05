@@ -11,7 +11,7 @@ Updated: 2026-11-05
 | File | Covers |
 |---|---|
 | `service.rs` | The state machine: dry-run, approval, idempotency across restarts, the concurrent claim, terminal results, validation, expiry and context changes, the shared rate limit, the crash after the claim, identity rotation, the failed final write, search and allow/revoke, the approval text |
-| `approval.rs` | The real binary with a client that answers the approval dialog: approved, declined, no dialog, `client-prompt`, and a send that does not repeat the prepared message |
+| `approval.rs` | The real binary with a client that answers the approval dialog: each mode (`dialog` approved and declined, `client-prompt` without a second question even when the client declares the dialog, `terminal`), no dialog, and a send that does not repeat the prepared message |
 | `adapters.rs` | WhatsApp against a local HTTP server (the contract, timeouts, odd bodies, rejections, no token); Telegram against a fake transport (authorization, timeout, close failure), the exact request, receipts, name cleaning |
 | `identity.rs` | The sender fingerprint, credentials, the session file format, which contacts are offered |
 | `setup.rs` | The default config, validated atomic writes, private files, credentials, the setup status and next steps, the login reading the file and not a stale copy, QR codes read from the bridge's drawing, the pages |
@@ -39,9 +39,11 @@ WhatsApp, 2026-11-05, with Claude Code, through our own bridge ([ADR-008](../dec
 
 Contact search, 2026-11-05: Telegram's `contacts.search` returned none of the owner's address book contacts, only global directory results, so search now filters the address book locally (tested offline in `identity.rs`).
 
+Codex, 2026-11-05, in the ChatGPT desktop app: its permission prompt showed `planId`, `recipientId` and `text`. Surprises: Codex declares MCP's approval dialog but declined it unseen, so every send was refused after the owner allowed the prompt; and with "Approve for me" its reviewer allowed the prompt on its own. Hence [ADR-009](../decisions/ADR-009-approval-is-the-mode-the-owner-chose.md): one approval mode, no second confirmation, and a warning to keep "Ask for approval".
+
 What is left, in this order, stopping at the first surprise:
 
-1. Codex: the same sends, checking that its prompt shows the destination and the text.
+1. Codex: a send with `client-prompt` after the fix, approved in its prompt.
 
 Record what happened in this note, and turn each surprise into a test.
 

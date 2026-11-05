@@ -118,6 +118,7 @@ enum Command {
 enum ApprovalMode {
     ClientPrompt,
     Terminal,
+    Dialog,
 }
 
 #[derive(Args)]
@@ -344,6 +345,7 @@ async fn run_setup_command(command: &Command, path: &std::path::Path) -> Result<
             let approval = match mode {
                 ApprovalMode::ClientPrompt => Approval::ClientPrompt,
                 ApprovalMode::Terminal => Approval::Terminal,
+                ApprovalMode::Dialog => Approval::Dialog,
             };
             let (config, clients) = approval::set_approval(path, approval, &process_env)?;
             print_json(&json!({ "approval": config.approval, "clients": clients }))?;

@@ -42,13 +42,20 @@ The Telegram API hash is written to `telegram-api-hash` (0600) and never returne
 
 ## Approving messages
 
-`send_message` repeats the plan's recipient and whole text; the server refuses a mismatch. Who says yes, in order:
+`send_message` repeats the plan's recipient and whole text; the server refuses a mismatch. The `approval` setting names the one way a live message is approved ([ADR-009](../decisions/ADR-009-approval-is-the-mode-the-owner-chose.md)):
 
-1. **The client's approval dialog** (MCP elicitation), when the client offers one. Claude Code did not on 2026-11-05.
-2. **The client's permission prompt**, with `"approval": "client-prompt"` in the config. The prompt shows the destination and the text. `messaging-mcp approval client-prompt` sets it and the two client settings below; the installer offers to run it. Keep the prompt on:
-   - Claude Code, in `~/.claude/settings.json`: `{ "permissions": { "ask": ["mcp__messaging-mcp__send_message"] } }`. This also holds in auto mode. Never choose "always allow" on this prompt.
-   - Codex, in `~/.codex/config.toml`: `approval_mode = "prompt"` under `[mcp_servers.messaging-mcp.tools.send_message]`. The command edits that file keeping your comments and the rest of it.
-3. **The terminal**, the default (`"approval": "terminal"`): `messaging-mcp approve <planId>`.
+| `approval` | Who says yes | Notes |
+|---|---|---|
+| `terminal` (default) | `messaging-mcp approve <planId>` in your terminal | Works with any client |
+| `client-prompt` | The client's permission prompt for `send_message`, which shows the destination and the text | Tested in Claude Code and Codex on 2026-11-05 |
+| `dialog` | MCP's approval dialog (elicitation) | Only for a client that shows it: Claude Code does not offer it, Codex declined it unseen |
+
+`messaging-mcp approval client-prompt` sets it and the two client settings that keep the prompt on; the installer offers to run it:
+
+- Claude Code, in `~/.claude/settings.json`: `{ "permissions": { "ask": ["mcp__messaging-mcp__send_message"] } }`. This also holds in auto mode.
+- Codex, in `~/.codex/config.toml`: `approval_mode = "prompt"` under `[mcp_servers.messaging-mcp.tools.send_message]`. The command edits that file keeping your comments and the rest of it.
+
+The prompt is your yes only while you answer it. In Codex, keep **Ask for approval**: with **Approve for me**, Codex's reviewer allowed the prompt on its own in the test. In either client, never choose "always allow" for `send_message`.
 
 ## The config file
 
@@ -57,7 +64,7 @@ The setup tools write it; editing by hand works too, followed by a reconnect. Re
 | Field | What it is | Default |
 |---|---|---|
 | `mode` | `dry-run` (nothing reaches an account) or `live` | `dry-run` |
-| `approval` | `terminal` or `client-prompt` (see above) | `terminal` |
+| `approval` | `terminal`, `client-prompt` or `dialog` (see above) | `terminal` |
 | `stateDir` | The ledger's folder, created 0700. Every client must use the same one | `.messaging-mcp-state` (`state` in the created config) |
 | `planTtlSeconds` | How long a plan, and its approval, stay valid (30–86400) | `600` |
 | `maxSendsPerMinute` | Attempts per minute across all clients (1–60) | `6` |
