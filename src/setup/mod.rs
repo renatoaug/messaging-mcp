@@ -123,7 +123,7 @@ impl Setup {
         })
     }
 
-    /// Switches between dry-run and live. Live plans still need the owner's terminal approval.
+    /// Switches between dry-run and live. Live plans still need the owner's approval.
     pub fn set_mode(&self, mode: Mode) -> Result<Config, Error> {
         update_config(&self.config_path, |config| {
             config.insert("mode".into(), json!(mode));

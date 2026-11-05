@@ -94,7 +94,8 @@ enum Command {
     TelegramPassword,
     /// Stop the WhatsApp bridge. The pairing is kept.
     WhatsappBridgeStop,
-    /// Internal: runs the WhatsApp bridge on a pseudo-terminal. Started by whatsapp_setup.
+    /// Internal: runs the WhatsApp bridge and keeps its pairing page current. Started by
+    /// whatsapp_setup.
     #[command(hide = true)]
     WhatsappBridgeSupervise {
         #[arg(long)]

@@ -2,18 +2,19 @@
 
 Updated: 2026-11-05
 
-> The assistant runs the setup through MCP tools; the owner scans QR codes, reads one login code, and approves each real message in their client. **Telegram was set up this way end to end on 2026-11-05. The WhatsApp steps run offline in tests but have not paired a real phone yet.** Record: [ADR-007](../decisions/ADR-007-agent-runs-setup.md).
+> The assistant runs the setup through MCP tools; the owner scans QR codes, reads one login code, and approves each real message in their client. **Both channels were set up this way end to end on 2026-11-05.** Records: [ADR-007](../decisions/ADR-007-agent-runs-setup.md), [ADR-008](../decisions/ADR-008-own-whatsapp-bridge.md).
 
 ## Install and register
 
 ```sh
 cargo build --release
 install -m 755 target/release/messaging-mcp ~/.local/bin/messaging-mcp
+(cd whatsapp-bridge && go build -o ~/.local/bin/messaging-mcp-whatsapp-bridge .)
 claude mcp add --scope user messaging-mcp -- ~/.local/bin/messaging-mcp mcp
 codex mcp add messaging-mcp -- ~/.local/bin/messaging-mcp mcp
 ```
 
-No variable is needed: without `--config` or `MESSAGING_MCP_CONFIG`, the binary uses `~/.config/messaging-mcp/messaging-mcp.config.json` (or `$XDG_CONFIG_HOME/messaging-mcp/`) and creates it in dry-run on first use, in a 0700 folder. After a new binary, reconnect the server (`/mcp` in Claude Code).
+A release archive already holds both binaries; put them in the same folder, since `whatsapp_setup` looks for the bridge next to `messaging-mcp`. No variable is needed: without `--config` or `MESSAGING_MCP_CONFIG`, the binary uses `~/.config/messaging-mcp/messaging-mcp.config.json` (or `$XDG_CONFIG_HOME/messaging-mcp/`) and creates it in dry-run on first use, in a 0700 folder. After a new binary, reconnect the server (`/mcp` in Claude Code).
 
 ## What the assistant does
 
@@ -23,7 +24,7 @@ No variable is needed: without `--config` or `MESSAGING_MCP_CONFIG`, the binary 
 |---|---|---|
 | 1. Create the Telegram app at my.telegram.org | a browser the assistant drives, then `telegram_set_credentials` | Signs in on the page or reads the code Telegram sends to their app |
 | 2. Log in to Telegram | `telegram_login`, called until it says `logged_in` | Scans the QR page (Telegram > Settings > Devices > Link Desktop Device). With a 2FA password: runs `messaging-mcp telegram-password` and types it |
-| 3. Build, start and pair WhatsApp | `whatsapp_setup`, then `whatsapp_status` | Scans the QR page (WhatsApp > Settings > Linked devices > Link a device) |
+| 3. Start and pair WhatsApp | `whatsapp_setup`, then `whatsapp_status` | Scans the QR page (WhatsApp > Settings > Linked devices > Link a device) |
 | 4. Go live | `set_mode` with `live` | Turns on approval (below) |
 | 5. Allow people | `search_contacts`, `allow_recipient` | Asks to message someone |
 

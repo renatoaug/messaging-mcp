@@ -468,7 +468,7 @@ impl MessagingServer {
     #[tool(
         description = "Allow a recipient: a Telegram contact by the reference search_contacts \
                        returned, or an exact WhatsApp JID. Only when the user asked to message \
-                       that person. Each live message to them still needs terminal approval.",
+                       that person. Each live message to them still needs the user's approval.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -536,8 +536,8 @@ impl MessagingServer {
 
     #[tool(
         description = "Prepare an exact text/recipient preview. No message is sent. Reuse the \
-                       same idempotency key for the same intent. Live mode requires subsequent \
-                       human approval in the terminal.",
+                       same idempotency key for the same intent. In live mode, send_message then \
+                       asks the user to approve it.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,

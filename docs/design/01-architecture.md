@@ -74,7 +74,7 @@ What each status means to the owner:
 | `setup_status` | What is configured and the next setup steps | Only the local bridge, over loopback |
 | `telegram_set_credentials` | Saves the Telegram app's ID and hash (the hash to a private file) | No |
 | `telegram_login` | Logs in by QR code, or adopts a saved session | Yes |
-| `whatsapp_setup`, `whatsapp_status`, `whatsapp_stop` | Builds, starts, pairs and stops the bridge | Yes |
+| `whatsapp_setup`, `whatsapp_status`, `whatsapp_stop` | Starts, pairs and stops our WhatsApp bridge | Yes |
 | `set_mode` | Dry-run or live | No |
 | `get_status` | The local configuration check | No |
 | `list_recipients` | The allowed recipients and their exact destinations | No |

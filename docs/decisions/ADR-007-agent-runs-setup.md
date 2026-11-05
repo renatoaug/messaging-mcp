@@ -1,6 +1,6 @@
 # ADR-007: The agent runs the setup; the owner approves each live message in their client
 
-- **Status**: Accepted
+- **Status**: Accepted; the bridge part is superseded by [ADR-008](ADR-008-own-whatsapp-bridge.md): `whatsapp_setup` starts our installed bridge and builds nothing
 - **Date**: 2026-11-05
 - **Related**: supersedes [ADR-003](ADR-003-human-steps-outside-mcp.md), partly supersedes [ADR-005](ADR-005-whatsapp-external-bridge.md) and [ADR-006](ADR-006-contact-search-suggests.md); [design/02-setup.md](../design/02-setup.md), [SECURITY.md](../../SECURITY.md)
 
