@@ -27,7 +27,7 @@ type(scope): lowercase subject
 ```
 
 - Types: `feat`, `fix`, `refactor`, `chore`, `docs`, `perf`, `test`, `ci`, `build`, `style`, `revert`.
-- Scopes, matching the code: `mcp`, `cli`, `service`, `store`, `config`, `telegram`, `whatsapp`, `docs`, `ci`. The `labels.yml` workflow adds `type:` and `scope:` labels from the title when a label with that name exists.
+- Scopes, matching the code: `mcp`, `cli`, `service`, `store`, `config`, `setup`, `telegram`, `whatsapp`, `bridge`, `docs`, `ci`. The `labels.yml` workflow adds `type:` and `scope:` labels from the title when a label with that name exists.
 - The subject **must not start with an uppercase letter**. The title becomes the release note: a `feat` bumps the minor version, anything else the patch.
 
 ## 3. Body

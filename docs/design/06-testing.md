@@ -2,7 +2,7 @@
 
 Updated: 2026-11-05
 
-> An offline suite that covers the whole flow with fakes, a coverage floor, and live tests that only the owner can run. **The offline suite passes on macOS. The release pipeline ran (v0.1.1, four binaries); the pull request checks on Linux and macOS have not run yet, as no pull request was opened. Telegram passed its live test on 2026-11-05; WhatsApp has not been tested live.**
+> An offline suite that covers the whole flow with fakes, a coverage floor, and live tests that only the owner can run. **The offline suite passes on macOS. The release pipeline ran (v0.1.1, four binaries); the pull request checks on Linux and macOS have not run yet, as no pull request was opened. Both channels passed their live test on 2026-11-05.**
 
 ## The offline suite
 
@@ -17,12 +17,15 @@ Updated: 2026-11-05
 | `setup.rs` | The default config, validated atomic writes, private files, credentials, the setup status and next steps, the login reading the file and not a stale copy, QR codes read from the bridge's drawing, the pages |
 | `config.rs` | Strict config, the loopback URL, private secret files, the state directory |
 | `cli.rs` | The real binary: an MCP client over stdio (including the setup tools and the config reload), the CLI across restarts, terminal-only commands refusing a pipe, the config created on first use |
+| `whatsapp-bridge/server_test.go` | The Go bridge's routes: the token on every route, health and the paired account, the QR code, one exact send, invalid requests sending nothing, a disconnected bridge attempting nothing, a failed send never reported as not sent |
 
 The suite never leaves loopback, never reads your config or session files, and never reads inherited credentials: functions that read the environment take an `Env`, tests pass `&|_| None`, and the binary runs with a cleared environment.
 
 ## Checks and the floor
 
 `scripts/check.sh` is what CI and the pre-push hook run: `cargo fmt --check`, `cargo clippy -D warnings`, `cargo deny check` (advisories, licenses, sources), `cargo machete` (unused dependencies), `cargo llvm-cov` failing under **80% of lines**, and the demo.
+
+`scripts/check.sh` also runs `gofmt`, `go vet` and `go test` on the bridge.
 
 The floor leaves out the files that only do something against a real account, a phone or a network: `src/main.rs`, `src/adapters/telegram_client.rs`, `src/adapters/telegram_login.rs`, `src/setup/telegram_qr.rs`, `src/setup/bridge_process.rs` and `src/setup/whatsapp_flow.rs`. Their logic that can run offline (the request, receipts, contact filtering, the session format, credentials, QR reading, the pages) lives elsewhere and is covered. Today the measured lines are at 81%.
 
@@ -32,11 +35,12 @@ The floor leaves out the files that only do something against a real account, a 
 
 Telegram, 2026-11-05, with Claude Code: the agent created the app at my.telegram.org through the browser, logged in by QR, and sent two messages to Saved Messages after approval in Claude Code's permission prompt (`client-prompt`). Surprises, each now fixed with a test: the QR page vanished on success instead of showing it; a second `telegram_login` discarded the first one's result; the login trusted the server's stale copy of the config; Claude Code offers no approval dialog (MCP elicitation), which led to `client-prompt` ([ADR-007](../decisions/ADR-007-agent-runs-setup.md)).
 
+WhatsApp, 2026-11-05, with Claude Code, through our own bridge ([ADR-008](../decisions/ADR-008-own-whatsapp-bridge.md)): `whatsapp_setup` started it, the pairing page worked, the first attempt timed out before the scan and the second paired; the agent allowed the owner's own number and sent one message after approval. Surprises, now fixed: a pairing attempt lasts only about 2.5 minutes, so the supervisor now starts it again up to 4 times; `whatsapp_status` returned at once instead of waiting for the scan. Before this, Claude Code's auto mode refused to let the agent clone and build the third-party bridge, which led to our own.
+
 What is left, in this order, stopping at the first surprise:
 
-1. Search: ask the assistant to find a contact, check the list is only your own contacts and chats.
-2. WhatsApp: `whatsapp_setup`, pair, allow your own number, send one message to it.
-3. Codex: the same Telegram send, checking that its prompt shows the destination and the text.
+1. Search: ask the assistant to find a Telegram contact, check the list is only your own contacts and chats.
+2. Codex: the same sends, checking that its prompt shows the destination and the text.
 
 Record what happened in this note, and turn each surprise into a test.
 
@@ -45,4 +49,5 @@ Record what happened in this note, and turn each surprise into a test.
 - [x] The first run of the release pipeline → v0.1.1 with four binaries.
 - [ ] The first run of the pull request checks.
 - [x] Telegram live → 2026-11-05.
+- [x] WhatsApp live → 2026-11-05.
 - [ ] The rest of the live test above.

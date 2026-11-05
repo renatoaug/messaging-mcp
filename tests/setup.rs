@@ -8,7 +8,7 @@ use messaging_mcp::config::{default_config_dir, load_config_from, resolve_config
 use messaging_mcp::plan::Mode;
 use messaging_mcp::setup::Setup;
 use messaging_mcp::setup::config_file::{ensure_config, update_config, write_private_file};
-use messaging_mcp::setup::qr::{Tone, encode, page, parse_last_half_block_code, status_page, svg};
+use messaging_mcp::setup::qr::{Tone, encode, page, status_page, svg};
 use messaging_mcp::setup::telegram_qr::login_url;
 use messaging_mcp::setup::whatsapp_bridge::{BridgePaths, phone_from_jid, port_from_base_url};
 use serde_json::json;
@@ -172,42 +172,8 @@ async fn status_lists_the_next_steps_and_the_mode_can_change() {
 }
 
 #[test]
-fn a_qr_code_survives_the_half_block_drawing_the_bridge_prints() {
+fn a_pairing_code_becomes_a_page_that_reloads() {
     let matrix = encode("2@abc,def,ghi").unwrap();
-    // Draw it the way the bridge does: two rows per line, with a light border.
-    let mut padded = vec![vec![false; matrix[0].len() + 2]];
-    for row in &matrix {
-        let mut line = vec![false];
-        line.extend(row);
-        line.push(false);
-        padded.push(line);
-    }
-    padded.push(vec![false; matrix[0].len() + 2]);
-    if padded.len() % 2 == 1 {
-        padded.push(vec![false; matrix[0].len() + 2]);
-    }
-    let drawing: String = padded
-        .chunks(2)
-        .map(|pair| {
-            pair[0]
-                .iter()
-                .zip(&pair[1])
-                .map(|(top, bottom)| match (top, bottom) {
-                    (false, false) => '█',
-                    (true, true) => ' ',
-                    (false, true) => '▀',
-                    (true, false) => '▄',
-                })
-                .collect::<String>()
-        })
-        .collect::<Vec<_>>()
-        .join("\r\n");
-    let log = format!(
-        "starting\nScan this QR code with your WhatsApp app:\n{drawing}\nWaiting for QR code scan...\n"
-    );
-    assert_eq!(parse_last_half_block_code(&log).unwrap(), padded);
-    assert_eq!(parse_last_half_block_code("no code here\n"), None);
-
     let picture = svg(&matrix);
     assert!(picture.starts_with("<svg") && picture.contains("<rect x="));
     let html = page("Title", &["Open the app.", "Scan it."], &picture);
@@ -231,7 +197,7 @@ fn bridge_details_are_read_without_guessing() {
     let paths = BridgePaths::new(Path::new("/c"));
     assert_eq!(
         paths.token(),
-        Path::new("/c/whatsapp-bridge/run/store/.bridge-token")
+        Path::new("/c/whatsapp-bridge/store/.bridge-token")
     );
     assert_eq!(login_url(&[0xfb, 0xff]), "tg://login?token=-_8");
 }

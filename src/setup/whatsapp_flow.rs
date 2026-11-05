@@ -1,58 +1,38 @@
-//! The WhatsApp setup flow: build, start, wait for the pairing scan, record the account. It
-//! drives `git`, Go, the bridge process and the owner's phone, so the offline suite leaves it out
-//! of the coverage floor; the first live test exercises it.
+//! The WhatsApp setup flow: start the bridge, wait for the pairing scan, record the account. It
+//! drives the bridge process and the owner's phone, so the offline suite leaves it out of the
+//! coverage floor; the live test exercises it.
 
 use std::time::Duration;
 
 use serde_json::{Value, json};
-use tokio::task::JoinHandle;
 
 use super::config_file::{section, update_config};
-use super::whatsapp_bridge::phone_from_jid;
+use super::whatsapp_bridge::{BRIDGE_BINARY, bridge_binary, phone_from_jid};
 use super::{Setup, WAIT, WHATSAPP_PAGE, bridge_process, setup_error};
 use crate::config::Config;
 use crate::error::Error;
 use crate::secrets::read_secret_file;
 
 impl Setup {
-    /// Builds the bridge when needed, starts it, and waits up to 25 seconds for a QR code or a
-    /// connection.
+    /// Starts the bridge, and waits up to 25 seconds for a QR code or a connection.
     pub async fn whatsapp_setup(&self, config: &Config) -> Result<Value, Error> {
-        let bridge = self.bridge();
-        if !bridge.binary().exists() {
-            let mut build = self.build.lock().await;
-            if build.as_ref().is_none_or(JoinHandle::is_finished) {
-                let paths = bridge.clone();
-                let previous = build.take();
-                if let Some(previous) = previous
-                    && let Ok(Err(error)) = previous.await
-                {
-                    return Err(error);
-                }
-                if !bridge.binary().exists() {
-                    *build = Some(tokio::task::spawn_blocking(move || {
-                        bridge_process::build(&paths)
-                    }));
-                }
-            }
-            let started = tokio::time::Instant::now();
-            while build.as_ref().is_some_and(|job| !job.is_finished()) && started.elapsed() < WAIT {
-                tokio::time::sleep(Duration::from_millis(500)).await;
-            }
-            if let Some(job) = build.as_ref().filter(|job| !job.is_finished()) {
-                let _ = job;
-                return Ok(json!({
-                    "status": "building",
-                    "log": bridge.build_log(),
-                    "next": "Building the bridge takes a few minutes the first time. Call \
-                             whatsapp_setup again.",
-                }));
-            }
-            if let Some(job) = build.take() {
-                job.await
-                    .map_err(|_| setup_error("WHATSAPP_BRIDGE_FAILED", "The build stopped."))??;
-            }
+        let exe = std::env::current_exe()
+            .map_err(|_| setup_error("WHATSAPP_BRIDGE_FAILED", "Could not find messaging-mcp."))?;
+        let installed = bridge_binary(&exe).is_some_and(|binary| binary.is_file());
+        if !installed {
+            return Err(setup_error(
+                "WHATSAPP_BRIDGE_MISSING",
+                format!(
+                    "{BRIDGE_BINARY} is not installed next to messaging-mcp. Install it from the \
+                     release archive, or build it from the repository: `cd whatsapp-bridge && \
+                     go build -o {} .`",
+                    exe.parent()
+                        .map(|dir| dir.join(BRIDGE_BINARY).display().to_string())
+                        .unwrap_or_default()
+                ),
+            ));
         }
+        let bridge = self.bridge();
         let port = Self::whatsapp_port(config);
         let token = bridge.token();
         update_config(&self.config_path, |config| {
@@ -68,10 +48,12 @@ impl Setup {
             &self.config_path,
             &self.downloads.join(WHATSAPP_PAGE),
         )?;
-        self.whatsapp_wait(port).await
+        self.whatsapp_wait(port, false).await
     }
 
-    pub(super) async fn whatsapp_wait(&self, port: u16) -> Result<Value, Error> {
+    /// Waits for the bridge to connect. With `for_scan`, a visible QR page does not end the wait:
+    /// the call waits the whole 25 seconds for the owner to scan it.
+    pub(super) async fn whatsapp_wait(&self, port: u16, for_scan: bool) -> Result<Value, Error> {
         let bridge = self.bridge();
         let page = self.downloads.join(WHATSAPP_PAGE);
         let started = tokio::time::Instant::now();
@@ -81,16 +63,19 @@ impl Setup {
                 Err(_) => None,
             };
             if let Some(health) = health.filter(|health| health.connected && health.paired) {
-                let _ = health;
-                let html = super::qr::status_page(
-                    super::qr::Tone::Success,
-                    "You're connected",
-                    "WhatsApp is linked to Messaging MCP. You can close this tab.",
-                );
-                let _ = super::config_file::write_private_file(&page, html.as_bytes());
-                return self.whatsapp_connected();
+                return self.whatsapp_connected(&health.jid);
             }
-            if page.exists() && started.elapsed() > Duration::from_secs(2) {
+            if bridge_process::running_pid(&bridge).is_none() && started.elapsed() > WAIT / 5 {
+                return Err(setup_error(
+                    "WHATSAPP_BRIDGE_STOPPED",
+                    format!(
+                        "The bridge stopped. Its log is {}. Call whatsapp_setup to start it again.",
+                        bridge.log().display()
+                    ),
+                ));
+            }
+            let waiting = page.exists() && started.elapsed() > Duration::from_secs(2);
+            if waiting && (!for_scan || started.elapsed() > WAIT) {
                 return Ok(json!({
                     "status": "waiting_for_scan",
                     "page": page,
@@ -102,7 +87,7 @@ impl Setup {
                     ),
                 }));
             }
-            if started.elapsed() > WAIT {
+            if started.elapsed() > WAIT && !waiting {
                 return Ok(json!({
                     "status": "starting",
                     "log": bridge.log(),
@@ -113,11 +98,9 @@ impl Setup {
         }
     }
 
-    /// Records which account is paired, read from the bridge's own device table.
-    fn whatsapp_connected(&self) -> Result<Value, Error> {
-        let account = bridge_process::device_jid(&self.bridge())
-            .as_deref()
-            .and_then(phone_from_jid);
+    /// Records which account is paired, as the bridge reports it.
+    fn whatsapp_connected(&self, jid: &str) -> Result<Value, Error> {
+        let account = phone_from_jid(jid);
         if let Some(account) = &account {
             update_config(&self.config_path, |config| {
                 let whatsapp = section(config, "whatsapp");

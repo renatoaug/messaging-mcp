@@ -21,50 +21,6 @@ pub fn encode(text: &str) -> Option<Matrix> {
     )
 }
 
-/// Reads one half-block character: (top is dark, bottom is dark).
-///
-/// The WhatsApp bridge draws its code with `█` for two light modules, ` ` for two dark ones,
-/// `▀` for light over dark and `▄` for dark over light.
-fn half_block(c: char) -> Option<(bool, bool)> {
-    match c {
-        '█' => Some((false, false)),
-        ' ' => Some((true, true)),
-        '▀' => Some((false, true)),
-        '▄' => Some((true, false)),
-        _ => None,
-    }
-}
-
-fn is_qr_line(line: &str) -> bool {
-    let length = line.chars().count();
-    length >= 21 && line.contains('█') && line.chars().all(|c| half_block(c).is_some())
-}
-
-/// Finds the last QR code drawn in half blocks in `log` and decodes it into modules.
-pub fn parse_last_half_block_code(log: &str) -> Option<Matrix> {
-    let lines: Vec<&str> = log
-        .lines()
-        .map(|line| line.trim_end_matches('\r'))
-        .collect();
-    let end = lines.iter().rposition(|line| is_qr_line(line))? + 1;
-    let width = lines[end - 1].chars().count();
-    let start = lines[..end]
-        .iter()
-        .rposition(|line| !is_qr_line(line) || line.chars().count() != width)
-        .map_or(0, |index| index + 1);
-    let block = &lines[start..end];
-    if block.len() < 10 {
-        return None;
-    }
-    let mut matrix = Matrix::new();
-    for line in block {
-        let (top, bottom): (Vec<bool>, Vec<bool>) = line.chars().filter_map(half_block).unzip();
-        matrix.push(top);
-        matrix.push(bottom);
-    }
-    Some(matrix)
-}
-
 /// Draws the modules as an SVG, with a light border four modules wide.
 pub fn svg(matrix: &Matrix) -> String {
     const MODULE: usize = 8;

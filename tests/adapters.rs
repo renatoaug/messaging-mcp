@@ -80,9 +80,8 @@ fn adapter(base_url: String, token: Result<String, Error>) -> WhatsAppAdapter {
 }
 
 #[tokio::test]
-async fn whatsapp_matches_the_pinned_bridge_contract_once() {
-    let (url, requests) =
-        bridge(Some(http("200 OK", r#"{"success":true,"message":"sent"}"#))).await;
+async fn whatsapp_matches_the_bridge_contract_once() {
+    let (url, requests) = bridge(Some(http("200 OK", r#"{"success":true,"id":"3EB0ABC"}"#))).await;
     let receipt = adapter(url, Ok(TOKEN.to_string()))
         .send(&wa_recipient(), "hi", "plan")
         .await;
@@ -90,7 +89,7 @@ async fn whatsapp_matches_the_pinned_bridge_contract_once() {
         receipt.unwrap(),
         Receipt {
             accepted: true,
-            provider_message_id: None
+            provider_message_id: Some("3EB0ABC".to_string())
         }
     );
     let requests = requests.lock().unwrap();
@@ -136,6 +135,13 @@ async fn whatsapp_auth_rejection_is_not_sent_and_a_missing_token_sends_nothing()
         (error.code, error.outcome),
         ("WHATSAPP_REJECTED", Outcome::NotSent)
     );
+    // 409: the bridge was not connected and attempted nothing.
+    let (url, _) = bridge(Some(http("409 Conflict", r#"{"success":false}"#))).await;
+    let error = adapter(url, Ok(TOKEN.to_string()))
+        .send(&wa_recipient(), "hi", "plan")
+        .await
+        .unwrap_err();
+    assert_eq!(error.outcome, Outcome::NotSent);
 
     let (url, requests) = bridge(Some(http("200 OK", r#"{"success":true}"#))).await;
     let missing = Err(Error::new("SECRET_UNAVAILABLE", "secret"));

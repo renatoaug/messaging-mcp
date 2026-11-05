@@ -47,6 +47,7 @@ What this makes easier, what it makes harder, what to watch. (bullets)
 | [ADR-002](ADR-002-plans-sent-at-most-once.md) | Every message is a durable plan, attempted at most once | Accepted |
 | [ADR-003](ADR-003-human-steps-outside-mcp.md) | Approving, allowing and logging in happen only in a terminal | Superseded by ADR-007 |
 | [ADR-004](ADR-004-telegram-personal-mtproto.md) | Telegram as the owner's own user, through MTProto | Accepted |
-| [ADR-005](ADR-005-whatsapp-external-bridge.md) | WhatsApp through one external bridge the owner runs | Partly superseded by ADR-007 |
+| [ADR-005](ADR-005-whatsapp-external-bridge.md) | WhatsApp through one external bridge the owner runs | Superseded by ADR-008 |
 | [ADR-006](ADR-006-contact-search-suggests.md) | Contact search suggests; only the owner adds a recipient | Partly superseded by ADR-007 |
 | [ADR-007](ADR-007-agent-runs-setup.md) | The agent runs the setup; the owner approves each live message in their client | Accepted |
+| [ADR-008](ADR-008-own-whatsapp-bridge.md) | Our own WhatsApp bridge, on whatsmeow | Accepted |

@@ -2,40 +2,38 @@
 
 Updated: 2026-11-05
 
-> WhatsApp goes through a separate Go program, the bridge from [verygoodplugins/whatsapp-mcp](https://github.com/verygoodplugins/whatsapp-mcp), built on `whatsmeow`. It links to your account as a WhatsApp Web device. One bridge runs on the machine; every client uses it. The assistant builds, starts and pairs it with `whatsapp_setup`. **The contract and the QR reading are tested offline; the bridge has not been built or paired against a real phone yet.** Records: [ADR-005](../decisions/ADR-005-whatsapp-external-bridge.md), [ADR-007](../decisions/ADR-007-agent-runs-setup.md).
+> WhatsApp goes through our own bridge, `messaging-mcp-whatsapp-bridge`, a small Go program on `whatsmeow` that links to your account as a WhatsApp Web device. One bridge runs on the machine; every client uses it. The assistant starts and pairs it with `whatsapp_setup`. **Tested end to end on 2026-11-05: paired by QR, one message sent to the owner's own number after approval in Claude Code.** Records: [ADR-008](../decisions/ADR-008-own-whatsapp-bridge.md), [ADR-007](../decisions/ADR-007-agent-runs-setup.md).
 
-## The pinned contract
+## The bridge
 
-Checked at commit [`a1af56c4`](https://github.com/verygoodplugins/whatsapp-mcp/tree/a1af56c43a8e8ec4196f4c65e520a12d44bf79cc) on 2026-11-05 (the manifest says 0.7.0; compare by commit, not by tag). The bridge's endpoints are `/api/health`, `/api/send`, `/api/mark-read`, `/api/react`, `/api/download` and `/api/typing`. We use only:
+The source is in `whatsapp-bridge/` (`main.go`, `server.go`, `server_test.go`). It keeps the device session in `store/session.db` and nothing else: no message history, no media, no webhooks. It never logs message contents. It listens only on `127.0.0.1`, and every route needs `Authorization: Bearer <token>`; the token is created on first start in `store/.bridge-token` (0600). The SQLite driver is pure Go, so it builds without a C compiler; releases ship it next to `messaging-mcp`.
 
 ```text
-POST /api/send
-Authorization: Bearer <token>
-{"recipient": "<JID>", "message": "<text>"}
-
-→ 200 {"success": true, "message": "..."}
+GET  /api/health → 200 {"connected": true, "paired": true, "jid": "5511999999999:12@s.whatsapp.net"}  (503 when not connected)
+GET  /api/qr     → 200 {"code": "2@…", "paired": false, "connected": false}
+POST /api/send   {"recipient": "<JID>", "message": "<text>"} → 200 {"success": true, "id": "3EB0…"}
 ```
 
-| Answer | Our result |
+| `/api/send` answer | Our result |
 |---|---|
-| 200 with `"success": true` | `sent`, with no message ID (the bridge returns none) |
-| 400, 401, 403, 404, 405 | `failed` (`WHATSAPP_REJECTED`): these reject before the send handler |
-| Any other status, a redirect, a timeout, a body that is not JSON, `success` not `true`, over 16 KB | `outcome_unknown` |
+| 200 with `"success": true` | `sent`, with WhatsApp's message ID |
+| 400 (bad JSON, unknown field, not a phone or group JID, blank text), 401 (token), 409 (not connected) | `failed` (`WHATSAPP_REJECTED`): nothing was attempted |
+| 502 (the send failed), any other status, a redirect, a timeout, an odd body | `outcome_unknown`: the message may have left |
 | No token, or a token under 16 characters | `failed` before any request |
 
-The bridge has no idempotency key, and its send keeps running even if our request times out. That is why a timeout is uncertain.
+The bridge exits with code 4 when a pairing times out unscanned, and 5 when the device is unlinked from the phone (it then forgets the session, so the next start pairs again).
 
-## Setting up the bridge
+## Setting up
 
-`whatsapp_setup` does it, and each call waits up to 25 seconds before answering, so the assistant calls it again until it is done:
+`whatsapp_setup` does it:
 
-1. **Build** (first time only, a few minutes): checks `git` and `go`, clones the repository into `~/.config/messaging-mcp/whatsapp-bridge/src`, checks out the pinned commit, and runs `go build` with CGO (the upstream release ships a binary for Linux x86-64 only). The output goes to `build.log`.
-2. **Configure**: writes `whatsapp.baseUrl` (`http://127.0.0.1:8080/api`) and `whatsapp.tokenFile` (`run/store/.bridge-token`) to the config.
-3. **Start**: launches `messaging-mcp whatsapp-bridge-supervise` in its own process group, so the bridge keeps running when the MCP client closes. It runs the bridge from `run/` with `WEBHOOK_ENABLED=false`, `WHATSAPP_AUTO_DOWNLOAD_MEDIA=false`, `FORWARD_SELF=false` and `WHATSAPP_DEVICE_NAME="Messaging MCP"`. Webhooks and media download are on by default upstream and are not needed to send.
-4. **Pair**: the bridge draws its QR code only on a terminal, so the supervisor gives it a pseudo-terminal, copies what it prints to `bridge.log` (owner-only, started over past 1 MB), reads each new code drawn in half-block characters and redraws it on `messaging-mcp-whatsapp-pairing.html` in `~/Downloads`. You scan it in WhatsApp → Settings → Linked devices → Link a device.
-5. **Confirm**: `whatsapp_status` asks the bridge's `/api/health` with its token. Once it reports connected and paired, the server reads the paired number from the bridge's own device table (`store/whatsapp.db`, read-only), sets `whatsapp.accountLabel` to it, and the page turns into "You're connected".
+1. **Find the bridge** next to `messaging-mcp`. If it is missing, the error says how to install it from the release archive or build it: `cd whatsapp-bridge && go build -o ~/.local/bin/messaging-mcp-whatsapp-bridge .`
+2. **Configure**: writes `whatsapp.baseUrl` (`http://127.0.0.1:8080/api`) and `whatsapp.tokenFile` (`~/.config/messaging-mcp/whatsapp-bridge/store/.bridge-token`).
+3. **Start**: launches `messaging-mcp whatsapp-bridge-supervise` in its own process group, so the bridge keeps running when the MCP client closes. The supervisor runs the bridge with its output in `bridge.log` (owner-only), and every second asks `/api/qr` for the current code and redraws `messaging-mcp-whatsapp-pairing.html` in `~/Downloads`.
+4. **Pair**: you scan the page in WhatsApp → Settings → Linked devices → Link a device. WhatsApp offers about 2.5 minutes of codes per attempt; the supervisor starts a timed-out pairing again up to 4 times, so you have about 10 minutes. The page turns into "You're connected" when it works, or "The code expired" after that.
+5. **Confirm**: `whatsapp_status` waits up to 25 seconds for `/api/health` to report connected and paired, then sets `whatsapp.accountLabel` to the paired number the bridge reports.
 
-`whatsapp_stop` (or `messaging-mcp whatsapp-bridge-stop`) stops the supervisor and the bridge; the pairing stays, so the next start reconnects without a QR code. The bridge listens only on `127.0.0.1`. If you pair another account, our plans stop being sendable, because they are bound to the bridge token.
+`whatsapp_stop` (or `messaging-mcp whatsapp-bridge-stop`) stops the supervisor and the bridge; the pairing stays, so the next start reconnects without a QR code. If you pair another account, our plans stop being sendable, because they are bound to the bridge token.
 
 ## Allowing people
 
@@ -45,8 +43,10 @@ The bridge has no contact search, so WhatsApp recipients are added by exact numb
 messaging-mcp allow whatsapp 5511977776666@s.whatsapp.net --id ana --label "Ana"
 ```
 
+A JID is the country code and number, then `@s.whatsapp.net`. Some Brazilian accounts are registered without the extra 9 of mobile numbers, as the live test showed. When in doubt, use the number `whatsapp_status` reports for yourself.
+
 ## Still open
 
-- [ ] Build and pair the bridge against a real phone, and send to your own number.
 - [ ] Restarting the bridge after the machine restarts: nothing does yet; call `whatsapp_setup` again.
-- [ ] Replacing the bridge with an in-process client, which would remove Go ([ADR-001](../decisions/ADR-001-rust-single-binary.md)).
+- [ ] A contact search: `whatsmeow` can read the account's contacts; not built.
+- [ ] Replacing the bridge with an in-process Rust client, which would remove the second binary ([ADR-008](../decisions/ADR-008-own-whatsapp-bridge.md)).

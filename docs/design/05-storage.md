@@ -15,7 +15,7 @@ Updated: 2026-11-05
 
 ## The config folder
 
-Next to the config, in `~/.config/messaging-mcp/` (0700), the setup tools keep: `telegram-api-hash` and `telegram-session.json` (0600), `telegram-pending-session.json` while a login waits for a 2FA password, and `whatsapp-bridge/` with the bridge's source, binary, `run/store/` (its session, token and history), `bridge.log`, `build.log` and `bridge.pid`.
+Next to the config, in `~/.config/messaging-mcp/` (0700), the setup tools keep: `telegram-api-hash` and `telegram-session.json` (0600), `telegram-pending-session.json` while a login waits for a 2FA password, and `whatsapp-bridge/` with `store/` (the bridge's device session and token), `bridge.log` and `bridge.pid`.
 
 ## `plan`
 

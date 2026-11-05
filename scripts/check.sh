@@ -11,3 +11,5 @@ cargo machete
 cargo llvm-cov --locked --fail-under-lines 80 \
   --ignore-filename-regex 'src/(main\.rs|adapters/telegram_(client|login)\.rs|setup/(telegram_qr|bridge_process|whatsapp_flow)\.rs)'
 cargo run --quiet --locked --example demo
+# The WhatsApp bridge, in Go: vet and its offline tests.
+(cd whatsapp-bridge && test -z "$(gofmt -l .)" && go vet ./... && go test ./...)

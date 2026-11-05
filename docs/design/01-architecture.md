@@ -2,7 +2,7 @@
 
 Updated: 2026-11-05
 
-> One binary, two front doors (MCP over stdio and the CLI), one core and one ledger. **Telegram has sent real messages (2026-11-05); WhatsApp is tested offline only.** Records: [ADR-001](../decisions/ADR-001-rust-single-binary.md), [ADR-002](../decisions/ADR-002-plans-sent-at-most-once.md), [ADR-007](../decisions/ADR-007-agent-runs-setup.md).
+> One binary, two front doors (MCP over stdio and the CLI), one core and one ledger. **Both channels have sent real messages (2026-11-05).** Records: [ADR-001](../decisions/ADR-001-rust-single-binary.md), [ADR-002](../decisions/ADR-002-plans-sent-at-most-once.md), [ADR-007](../decisions/ADR-007-agent-runs-setup.md).
 
 ## The parts
 
@@ -10,7 +10,7 @@ Updated: 2026-11-05
 Claude Code ── MCP stdio ──┐
 Codex       ── MCP stdio ──┼── MessagingService ── PlanStore (SQLite, shared by every process)
 You (CLI)   ───────────────┘         │
-                                     ├── WhatsAppAdapter ── loopback HTTP ── Go bridge ── WhatsApp
+                                     ├── WhatsAppAdapter ── loopback HTTP ── our Go bridge ── WhatsApp
                                      └── TelegramAdapter ── MTProto ─────────────────── Telegram
 ```
 
@@ -32,6 +32,7 @@ Each MCP client starts its own `messaging-mcp mcp` process. They coordinate thro
 | `src/adapters/telegram_client.rs` | The real MTProto client (network only) |
 | `src/adapters/telegram_login.rs` | `telegram-login` and `telegram-password` |
 | `src/app.rs` | Wires the real adapters; creating them contacts nobody |
+| `whatsapp-bridge/` | The WhatsApp bridge, in Go on `whatsmeow`: session only, loopback only ([04-whatsapp.md](04-whatsapp.md)) |
 
 ## The life of a plan
 
@@ -107,7 +108,7 @@ Every command takes `--config FILE`; without it, `MESSAGING_MCP_CONFIG`, then `~
 ## Still open
 
 - [x] A first live send on Telegram → two messages to Saved Messages on 2026-11-05.
-- [ ] A first live send on WhatsApp ([06-testing.md](06-testing.md#the-first-live-test)).
+- [x] A first live send on WhatsApp → one message to the owner's own number on 2026-11-05.
 - [ ] Deleting old plans: nothing does yet, and their text stays in the ledger.
 - [ ] An approval service under a separate OS user, for a boundary that holds against an agent with a shell.
 - [ ] Optional formatting (Markdown to Telegram entities), shown raw in the approval.

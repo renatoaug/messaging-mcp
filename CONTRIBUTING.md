@@ -13,7 +13,7 @@ Thanks for wanting to help Messaging MCP. This page is the short version: how a 
 
 ## Running it
 
-[`docs/design/02-setup.md`](docs/design/02-setup.md) builds the binary and describes every setting. You never need a real account to work on the code: dry-run and the test fakes cover the whole flow.
+[`docs/design/02-setup.md`](docs/design/02-setup.md) builds the binary and describes every setting. The WhatsApp bridge in `whatsapp-bridge/` needs [Go](https://go.dev). You never need a real account to work on the code: dry-run and the test fakes cover the whole flow.
 
 ## Rules and checks
 

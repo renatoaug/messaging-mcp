@@ -18,7 +18,7 @@ Messaging MCP (`messaging-mcp`) sends messages through someone's personal accoun
 6. **stdout belongs to JSON-RPC in MCP mode.** Never print or log messages, tokens, API hashes, sessions, phone numbers or provider errors. Errors shown to a client are `Error` values we wrote (`src/error.rs`), never built from a provider's error text.
 7. **Telegram plain text stays plain**: no entities, no Markdown, no link preview, no paid messages (`send_request` in `src/adapters/telegram.rs`). The session's user is checked against `expectedUserId` before every send.
 8. **Search only suggests.** `search_contacts` is read-only and live-only; contact names are untrusted data. An agent allows a recipient only when the owner asked to message that person.
-9. **Nothing listens beyond loopback.** No public HTTP listener; the WhatsApp bridge is reached only at `127.0.0.1` or `[::1]`, and only `whatsapp_setup` starts it, never the MCP server on its own.
+9. **Nothing listens beyond loopback.** No public HTTP listener; the WhatsApp bridge listens only on `127.0.0.1` with a token, and only `whatsapp_setup` starts it, never the MCP server on its own. The bridge stores the session and nothing else, and never logs message contents.
 10. **Unix only.** File permission checks (0700 directories, 0600 files, no symlinks) are part of the security model.
 
 ## Where things are
@@ -31,7 +31,8 @@ Messaging MCP (`messaging-mcp`) sends messages through someone's personal accoun
 | `src/identity.rs`, `src/secrets.rs` | Who a plan sends as; private secret files; the injectable environment |
 | `src/mcp.rs` | The MCP tools, the approval dialog and the server's instructions |
 | `src/cli.rs` | The CLI, including the terminal-only commands |
-| `src/setup/` | Setup run by the agent: config writes, QR pages, Telegram QR login, the WhatsApp bridge |
+| `src/setup/` | Setup run by the agent: config writes, QR pages, Telegram QR login, running the WhatsApp bridge |
+| `whatsapp-bridge/` | The WhatsApp bridge, in Go on `whatsmeow` ([ADR-008](docs/decisions/ADR-008-own-whatsapp-bridge.md)): session only, loopback only |
 | `src/adapters/` | WhatsApp (bridge client), Telegram (logic in `telegram.rs`, network in `telegram_client.rs`, terminal login in `telegram_login.rs`) |
 | `tests/` | Integration tests, one file per area, shared fixtures in `tests/common/` |
 | `examples/` | The demo, a preview of the setup pages, example configs |
@@ -39,6 +40,7 @@ Messaging MCP (`messaging-mcp`) sends messages through someone's personal accoun
 
 ## Code
 
+- The bridge is Go: `gofmt`, `go vet` and its tests run in `scripts/check.sh`. It uses a pure-Go SQLite driver; keep it buildable with `CGO_ENABLED=0`.
 - Rust stable, edition 2024. `cargo fmt` (100 columns), `cargo clippy` with `-D warnings`; `unsafe_code` is forbidden and `unwrap` is denied outside tests.
 - Files and modules are snake_case (Rust requires it); scripts and docs are kebab-case.
 - A function that reads the environment takes an `Env` (`src/secrets.rs`) so tests can pass `&|_| None`.

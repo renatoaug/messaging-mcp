@@ -32,6 +32,10 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: whatsapp-bridge/go.mod
+
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-llvm-cov,cargo-deny,cargo-machete

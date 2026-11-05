@@ -388,9 +388,10 @@ impl MessagingServer {
     }
 
     #[tool(
-        description = "Build (first time: a few minutes, needs git and Go), start and pair the \
-                       WhatsApp bridge. Writes a page with the pairing QR code; the user scans it \
-                       in WhatsApp > Settings > Linked devices. Waits up to 25 s per call.",
+        description = "Start and pair the WhatsApp bridge, installed next to messaging-mcp. \
+                       Writes a page with the pairing QR code; the user scans it in WhatsApp > \
+                       Settings > Linked devices. Returns once the page is ready; then call \
+                       whatsapp_status, which waits up to 25 s for the scan.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,

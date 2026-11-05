@@ -16,7 +16,6 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
-use tokio::task::JoinHandle;
 
 use crate::adapters::telegram::read_credentials;
 use crate::adapters::telegram_client;
@@ -48,7 +47,6 @@ pub struct Setup {
     config_dir: PathBuf,
     downloads: PathBuf,
     telegram: Mutex<Option<QrLogin>>,
-    build: Mutex<Option<JoinHandle<Result<(), Error>>>>,
 }
 
 impl Setup {
@@ -68,7 +66,6 @@ impl Setup {
             config_dir,
             downloads,
             telegram: Mutex::new(None),
-            build: Mutex::new(None),
         })
     }
 
@@ -233,10 +230,10 @@ impl Setup {
         if bridge_process::running_pid(&self.bridge()).is_none() {
             return Ok(json!({
                 "status": "not_running",
-                "next": "Call whatsapp_setup to build and start the bridge.",
+                "next": "Call whatsapp_setup to start the bridge.",
             }));
         }
-        self.whatsapp_wait(Self::whatsapp_port(config)).await
+        self.whatsapp_wait(Self::whatsapp_port(config), true).await
     }
 
     /// Stops the bridge. Pairing is kept: starting it again reconnects without a QR code.
@@ -266,11 +263,7 @@ impl Setup {
             next.push("Call telegram_login and show the user the QR page.".to_string());
         }
         if !paired {
-            next.push(
-                "Call whatsapp_setup to build, start and pair the WhatsApp bridge (needs git, \
-                 Go and Xcode command line tools)."
-                    .to_string(),
-            );
+            next.push("Call whatsapp_setup to start and pair the WhatsApp bridge.".to_string());
         }
         if config.mode == Mode::DryRun && (logged_in || paired) {
             next.push("Call set_mode with live when the user wants real messages.".to_string());
@@ -284,7 +277,7 @@ impl Setup {
                 "userId": telegram.and_then(|t| t.expected_user_id.clone()),
             },
             "whatsapp": {
-                "bridgeBuilt": bridge.binary().exists(),
+                "bridgeInstalled": std::env::current_exe().ok().and_then(|exe| whatsapp_bridge::bridge_binary(&exe)).is_some_and(|binary| binary.is_file()),
                 "bridgeRunning": running,
                 "paired": paired,
                 "account": config.whatsapp.as_ref().and_then(|w| w.account_label.clone()),

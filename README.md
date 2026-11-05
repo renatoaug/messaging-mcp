@@ -10,11 +10,11 @@ Claude Code, Codex and other MCP clients send messages through **your personal W
   <a href="docs/decisions/">🧭 Decisions</a>
 </p>
 
-**State:** Telegram works end to end with a real account (tested on 2026-11-05: QR login by the agent, approval in Claude Code's prompt, two messages delivered to Saved Messages). WhatsApp is built and tested offline only; its first live pairing is still to be done ([docs/design/06-testing.md](docs/design/06-testing.md)).
+**State:** both channels work end to end with real accounts, tested on 2026-11-05: the agent ran the setup (Telegram app and QR login, WhatsApp bridge and pairing), and messages reached the owner on both after approval in Claude Code's prompt ([docs/design/06-testing.md](docs/design/06-testing.md)).
 
 ## What it does
 
-- **Sends plain text** to recipients you allowed, on Telegram (as your own user, not a bot) and on WhatsApp (through a separate bridge program the assistant builds and starts).
+- **Sends plain text** to recipients you allowed, on Telegram (as your own user, not a bot) and on WhatsApp (through our own small bridge, which the assistant starts and pairs).
 - **Asks you first, every time.** The assistant prepares an exact message and shows it; your client then asks you to approve that destination and that text. Nothing leaves without your yes, and the yes never comes from the model.
 - **Sets itself up from the conversation**: the assistant creates the Telegram app, shows you QR codes to scan, builds the WhatsApp bridge and allows recipients when you ask to message someone.
 - **Searches your Telegram contacts and chats** to find the person you mean. Search only suggests.
@@ -22,13 +22,13 @@ Claude Code, Codex and other MCP clients send messages through **your personal W
 
 ## Stack
 
-Rust, one binary. MCP through the official Rust SDK (`rmcp`), Telegram through MTProto with `grammers`, WhatsApp through an external Go bridge over loopback HTTP, the ledger in SQLite. Why Rust: [ADR-001](docs/decisions/ADR-001-rust-single-binary.md). Why the assistant runs the setup: [ADR-007](docs/decisions/ADR-007-agent-runs-setup.md).
+Rust for `messaging-mcp`: MCP through the official Rust SDK (`rmcp`), Telegram through MTProto with `grammers`, the ledger in SQLite. Go for the WhatsApp bridge, on `whatsmeow`, reached over loopback HTTP ([ADR-008](docs/decisions/ADR-008-own-whatsapp-bridge.md)). Why Rust: [ADR-001](docs/decisions/ADR-001-rust-single-binary.md). Why the assistant runs the setup: [ADR-007](docs/decisions/ADR-007-agent-runs-setup.md).
 
 ## Requirements
 
 - macOS or Linux. Windows is not supported.
 - A release binary, or [Rust](https://rustup.rs) stable to build one.
-- For WhatsApp: `git`, [Go](https://go.dev) and a C compiler (Xcode command line tools on macOS). The assistant builds the bridge with them.
+- For WhatsApp: the `messaging-mcp-whatsapp-bridge` binary next to `messaging-mcp`. Releases include it; from source, build it with [Go](https://go.dev): `cd whatsapp-bridge && go build -o ~/.local/bin/messaging-mcp-whatsapp-bridge .`
 - To let the assistant create the Telegram app itself: a browser it can drive, such as the Claude in Chrome extension.
 
 ## Running
@@ -46,6 +46,7 @@ Then install the binary and register it in your clients. It creates its config i
 
 ```sh
 install -m 755 target/release/messaging-mcp ~/.local/bin/messaging-mcp
+(cd whatsapp-bridge && go build -o ~/.local/bin/messaging-mcp-whatsapp-bridge .)
 claude mcp add --scope user messaging-mcp -- ~/.local/bin/messaging-mcp mcp
 codex mcp add messaging-mcp -- ~/.local/bin/messaging-mcp mcp
 ```
@@ -56,7 +57,7 @@ Open a new session and ask: *"set up messaging-mcp and send me a hi on Telegram"
 
 | You say | The assistant |
 |---|---|
-| "Set up messaging-mcp" | Creates the Telegram app, shows the QR code, builds and pairs WhatsApp |
+| "Set up messaging-mcp" | Creates the Telegram app, shows the QR codes, starts and pairs WhatsApp |
 | "Send Maria: I'll be 10 minutes late" | Finds Maria, allows her, prepares the message, shows it, and sends after your yes |
 | "Switch to dry-run" | Stops reaching any account |
 
@@ -73,7 +74,7 @@ The tests never reach a network beyond loopback, never read your real config or 
 
 ## Releases
 
-Every merge to `main` is a release: [semantic-release](https://semantic-release.gitbook.io) reads the Conventional Commit titles since the last tag, bumps the version in `Cargo.toml` (a `feat` bumps the minor, anything else the patch), writes `CHANGELOG.md`, tags `vX.Y.Z` and publishes the GitHub release with binaries for macOS and Linux.
+Every merge to `main` is a release: [semantic-release](https://semantic-release.gitbook.io) reads the Conventional Commit titles since the last tag, bumps the version in `Cargo.toml` (a `feat` bumps the minor, anything else the patch), writes `CHANGELOG.md`, tags `vX.Y.Z` and publishes the GitHub release with `messaging-mcp` and its WhatsApp bridge for macOS and Linux.
 
 ## Docs
 
@@ -81,4 +82,4 @@ Everything about how Messaging MCP works, runs and was decided is indexed in [`d
 
 ## License
 
-[MIT](LICENSE). Unofficial: not affiliated with WhatsApp or Telegram. The WhatsApp bridge is a separate project under its own license; nothing from it is copied here.
+[MIT](LICENSE). Unofficial: not affiliated with WhatsApp or Telegram. The WhatsApp bridge uses [`whatsmeow`](https://github.com/tulir/whatsmeow), under the Mozilla Public License 2.0.

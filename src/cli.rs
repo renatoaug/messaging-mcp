@@ -312,7 +312,7 @@ async fn run_setup_command(command: &Command, path: &std::path::Path) -> Result<
                 .as_ref()
                 .and_then(|whatsapp| port_from_base_url(&whatsapp.base_url))
                 .unwrap_or(DEFAULT_PORT);
-            bridge_process::supervise(&bridge(), port, page)?;
+            bridge_process::supervise(&bridge(), port, page).await?;
         }
         _ => return Ok(false),
     }

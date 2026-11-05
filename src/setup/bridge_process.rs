@@ -1,113 +1,33 @@
-//! Building and running the WhatsApp bridge. It needs `git`, Go and a C compiler, and it
-//! touches the network and the owner's account, so the offline suite leaves it out of the
-//! coverage floor.
+//! Running the WhatsApp bridge. It touches the owner's account and a phone, so the offline suite
+//! leaves it out of the coverage floor.
 //!
-//! The bridge draws its pairing QR code only when its output is a terminal. A small supervisor
-//! (`messaging-mcp whatsapp-bridge-supervise`) gives it a pseudo-terminal and copies what it
-//! prints to `bridge.log`, where the setup tools read the code. The supervisor runs in its own
-//! process group, so the bridge keeps running when the MCP client closes.
+//! `whatsapp_setup` starts a small supervisor (`messaging-mcp whatsapp-bridge-supervise`) in its
+//! own process group, so the bridge keeps running when the MCP client closes. The supervisor
+//! runs the bridge, keeps the pairing page in step with the bridge's current QR code, and leaves
+//! a result page when the bridge pairs or stops.
 
-use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write};
+use std::fs::{self, OpenOptions};
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
 use rustix::process::{Pid, test_kill_process};
-use rustix::pty::{OpenptFlags, grantpt, openpt, ptsname, unlockpt};
+use serde::de::DeserializeOwned;
 
 use crate::error::Error;
+use crate::secrets::read_secret_file;
 use crate::setup::config_file::{ensure_private_dir, write_private_file};
-use crate::setup::qr;
-use crate::setup::whatsapp_bridge::{BridgePaths, COMMIT, Health, REPOSITORY};
+use crate::setup::qr::{self, Tone};
+use crate::setup::whatsapp_bridge::{BridgePaths, Health, Pairing, bridge_binary};
 
-const MAX_LOG_BYTES: u64 = 1_000_000;
+/// Exit codes the bridge uses (`whatsapp-bridge/main.go`).
+const EXIT_PAIRING_TIMED_OUT: i32 = 4;
+const EXIT_LOGGED_OUT: i32 = 5;
 
 fn bridge_error(message: impl Into<String>) -> Error {
     Error::new("WHATSAPP_BRIDGE_FAILED", message)
-}
-
-fn tool_available(tool: &str) -> bool {
-    Command::new(tool)
-        .arg("version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
-}
-
-fn run_logged(command: &mut Command, log: &Path, what: &str) -> Result<(), Error> {
-    let file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .mode(0o600)
-        .open(log)
-        .map_err(|_| bridge_error("Could not write the build log."))?;
-    let error_file = file
-        .try_clone()
-        .map_err(|_| bridge_error("Could not write the build log."))?;
-    let status = command
-        .stdin(Stdio::null())
-        .stdout(file)
-        .stderr(error_file)
-        .status()
-        .map_err(|_| bridge_error(format!("Could not run {what}.")))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(bridge_error(format!(
-            "{what} failed. Details are in {}.",
-            log.display()
-        )))
-    }
-}
-
-/// Clones the pinned commit and builds the bridge. Takes a few minutes on the first run.
-pub fn build(paths: &BridgePaths) -> Result<(), Error> {
-    for tool in ["git", "go"] {
-        if !tool_available(tool) {
-            return Err(bridge_error(format!(
-                "`{tool}` is not installed. On macOS: `brew install {tool}`."
-            )));
-        }
-    }
-    ensure_private_dir(&paths.root)?;
-    let log = paths.build_log();
-    let source = paths.source();
-    if !source.join(".git").exists() {
-        let _ = fs::remove_dir_all(&source);
-        run_logged(
-            Command::new("git")
-                .args(["clone", "--quiet", REPOSITORY])
-                .arg(&source),
-            &log,
-            "git clone",
-        )?;
-    }
-    run_logged(
-        Command::new("git")
-            .arg("-C")
-            .arg(&source)
-            .args(["checkout", "--quiet", COMMIT]),
-        &log,
-        "git checkout of the pinned commit",
-    )?;
-    let binary = paths.binary();
-    if let Some(parent) = binary.parent() {
-        ensure_private_dir(parent)?;
-    }
-    run_logged(
-        Command::new("go")
-            .args(["build", "-o"])
-            .arg(&binary)
-            .arg(".")
-            .current_dir(source.join("whatsapp-bridge"))
-            .env("CGO_ENABLED", "1"),
-        &log,
-        "go build",
-    )
 }
 
 /// The supervisor's process ID, when it is still running.
@@ -118,13 +38,12 @@ pub fn running_pid(paths: &BridgePaths) -> Option<i32> {
     alive.then_some(pid)
 }
 
-/// Starts the supervisor, detached, unless one is already running. It keeps `page` showing the
-/// current pairing QR code.
+/// Starts the supervisor, detached, unless one is already running.
 pub fn start(paths: &BridgePaths, config_path: &Path, page: &Path) -> Result<(), Error> {
     if running_pid(paths).is_some() {
         return Ok(());
     }
-    ensure_private_dir(&paths.run_dir())?;
+    ensure_private_dir(&paths.root)?;
     let exe = std::env::current_exe().map_err(|_| bridge_error("Could not find messaging-mcp."))?;
     Command::new(exe)
         .arg("whatsapp-bridge-supervise")
@@ -141,7 +60,7 @@ pub fn start(paths: &BridgePaths, config_path: &Path, page: &Path) -> Result<(),
     Ok(())
 }
 
-/// Stops the supervisor and, with it, the bridge.
+/// Stops the supervisor and, with it, the bridge: they share a process group.
 pub fn stop(paths: &BridgePaths) -> bool {
     let Some(pid) = running_pid(paths).and_then(Pid::from_raw) else {
         return false;
@@ -151,125 +70,14 @@ pub fn stop(paths: &BridgePaths) -> bool {
     true
 }
 
-/// Runs the bridge on a pseudo-terminal until it exits, copying its output to the log.
-/// This is the body of `messaging-mcp whatsapp-bridge-supervise`.
-pub fn supervise(paths: &BridgePaths, port: u16, page: &Path) -> Result<(), Error> {
-    let failed = || bridge_error("The bridge could not be started on a pseudo-terminal.");
-    let master = openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY).map_err(|_| failed())?;
-    grantpt(&master).map_err(|_| failed())?;
-    unlockpt(&master).map_err(|_| failed())?;
-    let name = ptsname(&master, Vec::new()).map_err(|_| failed())?;
-    let slave = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(name.to_string_lossy().as_ref())
-        .map_err(|_| failed())?;
-    let mut child = Command::new(paths.binary())
-        .current_dir(paths.run_dir())
-        .env("WEBHOOK_ENABLED", "false")
-        .env("WHATSAPP_AUTO_DOWNLOAD_MEDIA", "false")
-        .env("FORWARD_SELF", "false")
-        .env("WHATSAPP_BRIDGE_PORT", port.to_string())
-        .env("WHATSAPP_DEVICE_NAME", "Messaging MCP")
-        .stdin(slave.try_clone().map_err(|_| failed())?)
-        .stdout(slave.try_clone().map_err(|_| failed())?)
-        .stderr(slave)
-        .spawn()
-        .map_err(|_| failed())?;
-    let pid = std::process::id().to_string();
-    write_private_file(&paths.pid(), pid.as_bytes())?;
-    copy_output(File::from(master), &paths.log(), page);
-    let stopped = qr::status_page(
-        qr::Tone::Notice,
-        "The WhatsApp bridge stopped",
-        "Ask your assistant to run whatsapp_setup to start it again.",
-    );
-    let _ = write_private_file(page, stopped.as_bytes());
-    let _ = child.wait();
-    let _ = fs::remove_file(paths.pid());
-    Ok(())
-}
-
-fn open_log(path: &Path) -> Option<File> {
-    OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(path)
-        .ok()
-}
-
-/// Keeps the page in step with the last QR code in `recent` output.
-fn refresh_page(recent: &str, page: &Path, shown: &mut Option<qr::Matrix>) {
-    let Some(matrix) = qr::parse_last_half_block_code(recent) else {
-        return;
-    };
-    if shown.as_ref() == Some(&matrix) {
-        return;
-    }
-    let html = qr::page(
-        "Scan with WhatsApp",
-        &[
-            "Open <b>WhatsApp</b> on your phone.",
-            "Go to <b>Settings</b>, then <b>Linked devices</b>.",
-            "Tap <b>Link a device</b> and point it here.",
-        ],
-        &qr::svg(&matrix),
-    );
-    if write_private_file(page, html.as_bytes()).is_ok() {
-        *shown = Some(matrix);
-    }
-}
-
-/// Copies the terminal's output to the log, starting the log over when it grows past 1 MB, and
-/// keeps the QR page current. The bridge may print message contents, so the log stays
-/// owner-only and small.
-fn copy_output(mut master: File, log_path: &Path, page: &Path) {
-    let Some(mut log) = open_log(log_path) else {
-        return;
-    };
-    let mut written = 0u64;
-    let mut buffer = [0u8; 8192];
-    let mut recent = String::new();
-    let mut shown = None;
-    // A read error means the bridge closed its terminal: it has exited.
-    while let Ok(read) = master.read(&mut buffer) {
-        if read == 0 {
-            break;
-        }
-        if written > MAX_LOG_BYTES {
-            match open_log(log_path) {
-                Some(fresh) => log = fresh,
-                None => return,
-            }
-            written = 0;
-        }
-        if log.write_all(&buffer[..read]).is_err() {
-            return;
-        }
-        written += read as u64;
-        recent.push_str(&String::from_utf8_lossy(&buffer[..read]));
-        if recent.len() > 64_000 {
-            let cut = recent.len() - 32_000;
-            let cut = (cut..recent.len())
-                .find(|i| recent.is_char_boundary(*i))
-                .unwrap_or(0);
-            recent.drain(..cut);
-        }
-        refresh_page(&recent, page, &mut shown);
-    }
-}
-
-/// Asks the bridge for its state, with its token, over loopback only.
-pub async fn health(port: u16, token: &str) -> Option<Health> {
+async fn get<T: DeserializeOwned>(port: u16, token: &str, route: &str) -> Option<T> {
     let client = reqwest::Client::builder()
         .no_proxy()
         .timeout(Duration::from_secs(3))
         .build()
         .ok()?;
     let response = client
-        .get(format!("http://127.0.0.1:{port}/api/health"))
+        .get(format!("http://127.0.0.1:{port}/api/{route}"))
         .bearer_auth(token)
         .send()
         .await
@@ -278,16 +86,129 @@ pub async fn health(port: u16, token: &str) -> Option<Health> {
     serde_json::from_slice(&body).ok()
 }
 
-/// The paired account's JID, read from the bridge's device table.
-pub fn device_jid(paths: &BridgePaths) -> Option<String> {
-    let connection = rusqlite::Connection::open_with_flags(
-        paths.device_database(),
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-    )
-    .ok()?;
-    connection
-        .query_row("SELECT jid FROM whatsmeow_device LIMIT 1", [], |row| {
-            row.get(0)
-        })
-        .ok()
+/// Asks the bridge for its state, with its token, over loopback only.
+pub async fn health(port: u16, token: &str) -> Option<Health> {
+    get(port, token, "health").await
+}
+
+async fn pairing(port: u16, token: &str) -> Option<Pairing> {
+    get(port, token, "qr").await
+}
+
+fn pairing_page(code: &str) -> Option<String> {
+    let matrix = qr::encode(code)?;
+    Some(qr::page(
+        "Scan with WhatsApp",
+        &[
+            "Open <b>WhatsApp</b> on your phone.",
+            "Go to <b>Settings</b>, then <b>Linked devices</b>.",
+            "Tap <b>Link a device</b> and point it here.",
+        ],
+        &qr::svg(&matrix),
+    ))
+}
+
+fn final_page(exit: Option<i32>) -> String {
+    match exit {
+        Some(EXIT_PAIRING_TIMED_OUT) => qr::status_page(
+            Tone::Notice,
+            "The code expired",
+            "Nobody scanned it in about 10 minutes. Ask your assistant to run whatsapp_setup for \
+             a new one.",
+        ),
+        Some(EXIT_LOGGED_OUT) => qr::status_page(
+            Tone::Notice,
+            "WhatsApp was unlinked",
+            "This device was removed in WhatsApp. Ask your assistant to run whatsapp_setup to \
+             link it again.",
+        ),
+        _ => qr::status_page(
+            Tone::Notice,
+            "The WhatsApp bridge stopped",
+            "Ask your assistant to run whatsapp_setup to start it again.",
+        ),
+    }
+}
+
+/// How many times a pairing that timed out is started again: WhatsApp offers about 2.5 minutes
+/// of codes per attempt, so four attempts give the owner about 10 minutes to scan.
+const PAIRING_ATTEMPTS: u32 = 4;
+
+fn spawn_bridge(binary: &Path, paths: &BridgePaths, port: u16) -> Result<Child, Error> {
+    let log = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .mode(0o600)
+        .open(paths.log())
+        .map_err(|_| bridge_error("Could not write the bridge log."))?;
+    let log_errors = log
+        .try_clone()
+        .map_err(|_| bridge_error("Could not write the bridge log."))?;
+    Command::new(binary)
+        .arg("-store")
+        .arg(paths.store())
+        .arg("-port")
+        .arg(port.to_string())
+        .stdin(Stdio::null())
+        .stdout(log)
+        .stderr(log_errors)
+        .spawn()
+        .map_err(|_| bridge_error("Could not start the bridge."))
+}
+
+/// Keeps the page in step with the bridge until it exits, and returns its exit code.
+async fn follow(child: &mut Child, paths: &BridgePaths, port: u16, page: &Path) -> Option<i32> {
+    let mut shown = String::new();
+    loop {
+        if let Ok(Some(status)) = child.try_wait() {
+            return status.code();
+        }
+        let state = match read_secret_file(&paths.token()) {
+            Ok(token) => pairing(port, &token).await,
+            Err(_) => None,
+        };
+        if let Some(state) = state {
+            if state.paired && state.connected && shown != "connected" {
+                let done = qr::status_page(
+                    Tone::Success,
+                    "You're connected",
+                    "WhatsApp is linked to Messaging MCP. You can close this tab.",
+                );
+                if write_private_file(page, done.as_bytes()).is_ok() {
+                    shown = "connected".to_string();
+                }
+            } else if !state.code.is_empty()
+                && state.code != shown
+                && let Some(html) = pairing_page(&state.code)
+                && write_private_file(page, html.as_bytes()).is_ok()
+            {
+                shown = state.code;
+            }
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
+/// Runs the bridge, keeping the page current, and starts it again when a pairing times out
+/// unscanned, up to [`PAIRING_ATTEMPTS`] times. This is the body of
+/// `messaging-mcp whatsapp-bridge-supervise`.
+pub async fn supervise(paths: &BridgePaths, port: u16, page: &Path) -> Result<(), Error> {
+    let exe = std::env::current_exe().map_err(|_| bridge_error("Could not find messaging-mcp."))?;
+    let binary = bridge_binary(&exe).ok_or_else(|| bridge_error("No bridge binary."))?;
+    // A fresh log for each supervisor; attempts within it append.
+    let _ = fs::remove_file(paths.log());
+    write_private_file(&paths.pid(), std::process::id().to_string().as_bytes())?;
+    let mut attempts = 1;
+    let exit = loop {
+        let mut child = spawn_bridge(&binary, paths, port)?;
+        let exit = follow(&mut child, paths, port, page).await;
+        if exit == Some(EXIT_PAIRING_TIMED_OUT) && attempts < PAIRING_ATTEMPTS {
+            attempts += 1;
+            continue;
+        }
+        break exit;
+    };
+    let _ = write_private_file(page, final_page(exit).as_bytes());
+    let _ = fs::remove_file(paths.pid());
+    Ok(())
 }

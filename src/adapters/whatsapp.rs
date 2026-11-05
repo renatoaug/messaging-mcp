@@ -14,13 +14,15 @@ use crate::secrets::{process_env, secret_from};
 const MAX_RESPONSE_BYTES: usize = 16_384;
 const MIN_TOKEN_CHARS: usize = 16;
 
-/// Only these statuses are guaranteed to reject before the bridge's send handler runs.
-const REJECTED: [StatusCode; 5] = [
+/// Only these statuses mean the bridge attempted nothing: a bad request, a wrong token, a missing
+/// route, or 409 when the bridge is not connected (`whatsapp-bridge/server.go`).
+const REJECTED: [StatusCode; 6] = [
     StatusCode::BAD_REQUEST,
     StatusCode::UNAUTHORIZED,
     StatusCode::FORBIDDEN,
     StatusCode::NOT_FOUND,
     StatusCode::METHOD_NOT_ALLOWED,
+    StatusCode::CONFLICT,
 ];
 
 pub type ReadToken = Arc<dyn Fn() -> Result<String, Error> + Send + Sync>;
@@ -149,10 +151,15 @@ impl ChannelAdapter for WhatsAppAdapter {
                 "Bridge did not confirm success. Verify the chat; no retry.",
             ));
         }
-        // The bridge returns neither a message ID nor a delivery receipt.
+        // WhatsApp's message ID for this send; there is no delivery receipt.
+        let provider_message_id = body
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty() && id.len() <= 128)
+            .map(str::to_string);
         Ok(Receipt {
             accepted: true,
-            provider_message_id: None,
+            provider_message_id,
         })
     }
 }

@@ -3,7 +3,8 @@ name: Release
 # Every merge to main is a release: semantic-release reads the Conventional Commit titles since the
 # last tag, bumps the version in Cargo.toml and Cargo.lock (feat a minor, everything else a patch),
 # writes CHANGELOG.md, commits them with [skip ci], tags vX.Y.Z and publishes the GitHub release.
-# Then each supported system builds the binary and attaches it to that release.
+# Then each supported system builds both binaries (messaging-mcp and its WhatsApp bridge) and
+# attaches them to that release.
 on:
   push:
     branches: [main]
@@ -62,10 +63,10 @@ jobs:
     strategy:
       matrix:
         include:
-          - { os: macos-latest, target: aarch64-apple-darwin }
-          - { os: macos-latest, target: x86_64-apple-darwin }
-          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
-          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu }
+          - { os: macos-latest, target: aarch64-apple-darwin, goos: darwin, goarch: arm64 }
+          - { os: macos-latest, target: x86_64-apple-darwin, goos: darwin, goarch: amd64 }
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, goos: linux, goarch: amd64 }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, goos: linux, goarch: arm64 }
     env:
       TAG: v${{ needs.release.outputs.version }}
     steps:
@@ -78,10 +79,23 @@ jobs:
 
       - run: cargo build --release --locked --target ${{ matrix.target }}
 
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: whatsapp-bridge/go.mod
+
+      # Pure Go (the SQLite driver needs no C), so it cross-builds for every target.
+      - name: Build the WhatsApp bridge
+        working-directory: whatsapp-bridge
+        run: go build -trimpath -o "../target/${{ matrix.target }}/release/messaging-mcp-whatsapp-bridge" .
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+
       - name: Package and upload
         run: |
           name="messaging-mcp-${TAG}-${{ matrix.target }}"
-          tar -czf "$name.tar.gz" -C "target/${{ matrix.target }}/release" messaging-mcp
+          tar -czf "$name.tar.gz" -C "target/${{ matrix.target }}/release" messaging-mcp messaging-mcp-whatsapp-bridge
           shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
           gh release upload "$TAG" "$name.tar.gz" "$name.tar.gz.sha256" --clobber
         env:
