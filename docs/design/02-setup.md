@@ -7,6 +7,14 @@ Updated: 2026-11-05
 ## Install and register
 
 ```sh
+curl -fsSL https://raw.githubusercontent.com/renatoaug/messaging-mcp/main/install.sh | sh
+```
+
+[`install.sh`](../../install.sh) picks the release archive for the system (macOS or Linux, Apple Silicon/ARM or x86-64), checks its SHA-256, installs `messaging-mcp` and `messaging-mcp-whatsapp-bridge` side by side in `~/.local/bin` (`whatsapp_setup` looks for the bridge next to `messaging-mcp`), runs `doctor` once, registers the server in Claude Code (`--scope user`) and Codex when they are installed, and asks how messages are approved (below). `MESSAGING_MCP_VERSION`, `MESSAGING_MCP_INSTALL_DIR`, `MESSAGING_MCP_REGISTER=0` and `MESSAGING_MCP_APPROVAL` change that. Download with `curl`, not a browser, on macOS: a browser download is quarantined because the binaries are not signed.
+
+From source:
+
+```sh
 cargo build --release
 install -m 755 target/release/messaging-mcp ~/.local/bin/messaging-mcp
 (cd whatsapp-bridge && go build -o ~/.local/bin/messaging-mcp-whatsapp-bridge .)
@@ -14,7 +22,7 @@ claude mcp add --scope user messaging-mcp -- ~/.local/bin/messaging-mcp mcp
 codex mcp add messaging-mcp -- ~/.local/bin/messaging-mcp mcp
 ```
 
-A release archive already holds both binaries; put them in the same folder, since `whatsapp_setup` looks for the bridge next to `messaging-mcp`. No variable is needed: without `--config` or `MESSAGING_MCP_CONFIG`, the binary uses `~/.config/messaging-mcp/messaging-mcp.config.json` (or `$XDG_CONFIG_HOME/messaging-mcp/`) and creates it in dry-run on first use, in a 0700 folder. After a new binary, reconnect the server (`/mcp` in Claude Code).
+No variable is needed: without `--config` or `MESSAGING_MCP_CONFIG`, the binary uses `~/.config/messaging-mcp/messaging-mcp.config.json` (or `$XDG_CONFIG_HOME/messaging-mcp/`) and creates it in dry-run on first use, in a 0700 folder. After a new binary, reconnect the server (`/mcp` in Claude Code).
 
 ## What the assistant does
 
@@ -37,7 +45,7 @@ The Telegram API hash is written to `telegram-api-hash` (0600) and never returne
 `send_message` repeats the plan's recipient and whole text; the server refuses a mismatch. Who says yes, in order:
 
 1. **The client's approval dialog** (MCP elicitation), when the client offers one. Claude Code did not on 2026-11-05.
-2. **The client's permission prompt**, with `"approval": "client-prompt"` in the config. The prompt shows the destination and the text. Keep it on:
+2. **The client's permission prompt**, with `"approval": "client-prompt"` in the config. The prompt shows the destination and the text. `messaging-mcp approval client-prompt` sets it and adds Claude Code's rule; the installer offers to run it. Keep the prompt on:
    - Claude Code, in `~/.claude/settings.json`: `{ "permissions": { "ask": ["mcp__messaging-mcp__send_message"] } }`. This also holds in auto mode. Never choose "always allow" on this prompt.
    - Codex, in `~/.codex/config.toml`: `default_tools_approval_mode = "prompt"` under `[mcp_servers.messaging-mcp]`.
 3. **The terminal**, the default (`"approval": "terminal"`): `messaging-mcp approve <planId>`.

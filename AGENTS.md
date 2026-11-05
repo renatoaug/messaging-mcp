@@ -12,14 +12,15 @@ Messaging MCP (`messaging-mcp`) sends messages through someone's personal accoun
 
 1. **Dry-run is the default.** A new setting defaults to the closed, safe value (`mode: dry-run`, `approval: terminal`).
 2. **Every live message needs the owner's yes, and the yes never comes from the model.** It comes from the client's approval dialog, the client's permission prompt (`approval: client-prompt`) or `messaging-mcp approve` in a terminal ([ADR-007](docs/decisions/ADR-007-agent-runs-setup.md)). `send_message` repeats the recipient and the whole text so the yes is given to what actually leaves. There is no MCP tool that approves a plan.
-3. **The owner's phone and passwords stay with the owner.** The agent drives setup through MCP tools, but scans happen on the owner's phone and a 2FA password is typed in a terminal (`messaging-mcp telegram-password`). No tool takes a password, a login code or a token as an argument except `telegram_set_credentials`, whose hash is written to a private file and never returned.
-4. **One path to send.** MCP, the CLI and the demo all go through `MessagingService` (`src/service.rs`) and the durable `PlanStore` (`src/store.rs`). A change to the state transitions, the identity binding (`src/identity.rs`), the approval, the receipt semantics or the allowlist needs regression tests in the same change.
-5. **No retry after an uncertain send.** Once a plan is `sending`, nothing attempts it again: not the service, not an adapter, not the Telegram sender pool (`NoRetries`).
-6. **stdout belongs to JSON-RPC in MCP mode.** Never print or log messages, tokens, API hashes, sessions, phone numbers or provider errors. Errors shown to a client are `Error` values we wrote (`src/error.rs`), never built from a provider's error text.
-7. **Telegram plain text stays plain**: no entities, no Markdown, no link preview, no paid messages (`send_request` in `src/adapters/telegram.rs`). The session's user is checked against `expectedUserId` before every send.
-8. **Search only suggests.** `search_contacts` is read-only and live-only; contact names are untrusted data. An agent allows a recipient only when the owner asked to message that person.
-9. **Nothing listens beyond loopback.** No public HTTP listener; the WhatsApp bridge listens only on `127.0.0.1` with a token, and only `whatsapp_setup` starts it, never the MCP server on its own. The bridge stores the session and nothing else, and never logs message contents.
-10. **Unix only.** File permission checks (0700 directories, 0600 files, no symlinks) are part of the security model.
+3. **The owner chooses how messages are approved.** Only `messaging-mcp approval` (run by the owner, or by the installer after asking) changes it; no MCP tool can.
+4. **The owner's phone and passwords stay with the owner.** The agent drives setup through MCP tools, but scans happen on the owner's phone and a 2FA password is typed in a terminal (`messaging-mcp telegram-password`). No tool takes a password, a login code or a token as an argument except `telegram_set_credentials`, whose hash is written to a private file and never returned.
+5. **One path to send.** MCP, the CLI and the demo all go through `MessagingService` (`src/service.rs`) and the durable `PlanStore` (`src/store.rs`). A change to the state transitions, the identity binding (`src/identity.rs`), the approval, the receipt semantics or the allowlist needs regression tests in the same change.
+6. **No retry after an uncertain send.** Once a plan is `sending`, nothing attempts it again: not the service, not an adapter, not the Telegram sender pool (`NoRetries`).
+7. **stdout belongs to JSON-RPC in MCP mode.** Never print or log messages, tokens, API hashes, sessions, phone numbers or provider errors. Errors shown to a client are `Error` values we wrote (`src/error.rs`), never built from a provider's error text.
+8. **Telegram plain text stays plain**: no entities, no Markdown, no link preview, no paid messages (`send_request` in `src/adapters/telegram.rs`). The session's user is checked against `expectedUserId` before every send.
+9. **Search only suggests.** `search_contacts` is read-only and live-only; contact names are untrusted data. An agent allows a recipient only when the owner asked to message that person.
+10. **Nothing listens beyond loopback.** No public HTTP listener; the WhatsApp bridge listens only on `127.0.0.1` with a token, and only `whatsapp_setup` starts it, never the MCP server on its own. The bridge stores the session and nothing else, and never logs message contents.
+11. **Unix only.** File permission checks (0700 directories, 0600 files, no symlinks) are part of the security model.
 
 ## Where things are
 
@@ -36,6 +37,7 @@ Messaging MCP (`messaging-mcp`) sends messages through someone's personal accoun
 | `src/adapters/` | WhatsApp (bridge client), Telegram (logic in `telegram.rs`, network in `telegram_client.rs`, terminal login in `telegram_login.rs`) |
 | `tests/` | Integration tests, one file per area, shared fixtures in `tests/common/` |
 | `examples/` | The demo, a preview of the setup pages, example configs |
+| `install.sh` | The one-command installer from a release; `shellcheck` runs on it in `scripts/check.sh` |
 | `.claude/skills/` | `create-pr`, `add-channel` |
 
 ## Code

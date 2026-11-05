@@ -102,6 +102,7 @@ There is no tool that approves a plan. The server's instructions tell the agent:
 | `telegram-login` | A person at a terminal | Logs in with a phone code instead of the QR ([03-telegram.md](03-telegram.md)) |
 | `telegram-password` | A person at a terminal | Types the 2FA password that finishes a QR login |
 | `whatsapp-bridge-stop` | Anyone | Stops the bridge; the pairing is kept |
+| `approval client-prompt\|terminal` | The owner | How live messages are approved; `client-prompt` also adds Claude Code's "ask" rule ([02-setup.md](02-setup.md#approving-messages)) |
 
 Every command takes `--config FILE`; without it, `MESSAGING_MCP_CONFIG`, then `~/.config/messaging-mcp/messaging-mcp.config.json`, created in dry-run on first use. Errors go to stderr as one JSON line, exit code 1.
 

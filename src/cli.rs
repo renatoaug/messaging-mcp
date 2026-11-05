@@ -12,6 +12,7 @@ use serde_json::json;
 
 use crate::adapters::telegram_login;
 use crate::app::create_app;
+use crate::config::Approval;
 use crate::config::{Recipient, default_config_dir, load_config_from, resolve_config_path};
 use crate::error::Error;
 use crate::mcp::{MessagingServer, status_report};
@@ -19,6 +20,7 @@ use crate::plan::Status;
 use crate::secrets::process_env;
 use crate::service::{MessagingService, PrepareInput};
 use crate::setup::Setup;
+use crate::setup::approval;
 use crate::setup::bridge_process;
 use crate::setup::config_file::ensure_config;
 use crate::setup::whatsapp_bridge::{BridgePaths, DEFAULT_PORT, port_from_base_url};
@@ -94,6 +96,12 @@ enum Command {
     TelegramPassword,
     /// Stop the WhatsApp bridge. The pairing is kept.
     WhatsappBridgeStop,
+    /// Choose how live messages are approved: in your assistant's prompt (client-prompt, which
+    /// also adds Claude Code's "ask" rule for send_message) or in a terminal (terminal).
+    Approval {
+        #[arg(value_enum)]
+        mode: ApprovalMode,
+    },
     /// Internal: runs the WhatsApp bridge and keeps its pairing page current. Started by
     /// whatsapp_setup.
     #[command(hide = true)]
@@ -101,6 +109,12 @@ enum Command {
         #[arg(long)]
         page: PathBuf,
     },
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum ApprovalMode {
+    ClientPrompt,
+    Terminal,
 }
 
 #[derive(Args)]
@@ -306,6 +320,14 @@ async fn run_setup_command(command: &Command, path: &std::path::Path) -> Result<
         Command::WhatsappBridgeStop => {
             print_json(&json!({ "stopped": bridge_process::stop(&bridge()) }))?;
         }
+        Command::Approval { mode } => {
+            let approval = match mode {
+                ApprovalMode::ClientPrompt => Approval::ClientPrompt,
+                ApprovalMode::Terminal => Approval::Terminal,
+            };
+            let (config, claude) = approval::set_approval(path, approval, &process_env)?;
+            print_json(&json!({ "approval": config.approval, "claudeCode": claude }))?;
+        }
         Command::WhatsappBridgeSupervise { page } => {
             let config = load_config_from(path)?;
             let port = config
@@ -352,6 +374,7 @@ async fn run(cli: Cli) -> Result<ExitCode, Error> {
         Command::TelegramLogin
         | Command::TelegramPassword
         | Command::WhatsappBridgeStop
+        | Command::Approval { .. }
         | Command::WhatsappBridgeSupervise { .. } => {}
     }
     Ok(ExitCode::SUCCESS)

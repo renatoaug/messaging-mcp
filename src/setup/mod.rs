@@ -4,6 +4,7 @@
 //!
 //! [ADR-007]: ../../docs/decisions/ADR-007-agent-runs-setup.md
 
+pub mod approval;
 pub mod bridge_process;
 pub mod config_file;
 pub mod qr;

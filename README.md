@@ -27,31 +27,31 @@ Rust for `messaging-mcp`: MCP through the official Rust SDK (`rmcp`), Telegram t
 ## Requirements
 
 - macOS or Linux. Windows is not supported.
-- A release binary, or [Rust](https://rustup.rs) stable to build one.
+- `curl` and `tar` for the installer, or [Rust](https://rustup.rs) stable and [Go](https://go.dev) to build from source.
 - For WhatsApp: the `messaging-mcp-whatsapp-bridge` binary next to `messaging-mcp`. Releases include it; from source, build it with [Go](https://go.dev): `cd whatsapp-bridge && go build -o ~/.local/bin/messaging-mcp-whatsapp-bridge .`
 - To let the assistant create the Telegram app itself: a browser it can drive, such as the Claude in Chrome extension.
 
 ## Running
 
-Build and try it with no account at all:
+Install with one command (macOS or Linux):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/renatoaug/messaging-mcp/main/install.sh | sh
+```
+
+It downloads the latest release for your system, checks its SHA-256, installs `messaging-mcp` and its WhatsApp bridge in `~/.local/bin`, registers the server in Claude Code and Codex when they are installed, and asks whether you want to approve messages in your assistant's prompt. Then open a new session and ask: *"set up messaging-mcp and send me a hi on Telegram"*. The script's settings (version, folder, skipping registration) are at the top of [`install.sh`](install.sh).
+
+From source, with Rust and Go:
 
 ```sh
 cargo build --release
-cargo run --example demo
-```
-
-The demo prepares and simulates one message per channel: `simulated`, not `sent`.
-
-Then install the binary and register it in your clients. It creates its config in `~/.config/messaging-mcp/` on first use:
-
-```sh
 install -m 755 target/release/messaging-mcp ~/.local/bin/messaging-mcp
 (cd whatsapp-bridge && go build -o ~/.local/bin/messaging-mcp-whatsapp-bridge .)
 claude mcp add --scope user messaging-mcp -- ~/.local/bin/messaging-mcp mcp
-codex mcp add messaging-mcp -- ~/.local/bin/messaging-mcp mcp
+messaging-mcp approval client-prompt
 ```
 
-Open a new session and ask: *"set up messaging-mcp and send me a hi on Telegram"*. The assistant follows `setup_status`. Before the first real message, turn on approval in your client: [docs/design/02-setup.md](docs/design/02-setup.md#approving-messages).
+`cargo run --example demo` tries the whole flow with no account: one simulated message per channel.
 
 ## Use it from your assistant
 

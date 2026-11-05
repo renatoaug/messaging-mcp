@@ -374,3 +374,32 @@ fn without_a_config_flag_a_private_dry_run_config_is_created_in_the_home_folder(
     use std::os::unix::fs::MetadataExt;
     assert_eq!(std::fs::metadata(&config).unwrap().mode() & 0o777, 0o600);
 }
+
+#[test]
+fn approval_client_prompt_adds_the_claude_ask_rule_once_and_keeps_other_settings() {
+    let f = fixture();
+    let claude = f.dir.path().join(".claude");
+    std::fs::create_dir(&claude).unwrap();
+    let settings = claude.join("settings.json");
+    let before = json!({ "theme": "dark", "permissions": { "allow": ["Bash(ls)"] } });
+    std::fs::write(&settings, before.to_string()).unwrap();
+
+    let first = f.json(&["approval", "client-prompt"]);
+    assert_eq!(first["approval"], "client-prompt");
+    assert_eq!(first["claudeCode"]["askRuleAdded"], true);
+    assert_eq!(
+        f.json(&["approval", "client-prompt"])["claudeCode"]["askRuleAdded"],
+        false
+    );
+
+    let after: Value = serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+    assert_eq!(after["theme"], "dark");
+    assert_eq!(after["permissions"]["allow"], json!(["Bash(ls)"]));
+    assert_eq!(
+        after["permissions"]["ask"],
+        json!(["mcp__messaging-mcp__send_message"])
+    );
+
+    assert_eq!(f.json(&["approval", "terminal"])["approval"], "terminal");
+    assert_eq!(f.json(&["doctor"])["mode"], "dry-run");
+}
