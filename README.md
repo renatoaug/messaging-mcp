@@ -1,6 +1,10 @@
 # Messaging MCP
 
-Claude Code, Codex and other MCP clients send messages through **your personal WhatsApp and Telegram accounts**, and you approve every real message before it leaves. MCP (Model Context Protocol) is how these assistants call outside tools. Messaging MCP is one local binary: an MCP server over stdio and a CLI, both on the same core and the same local ledger. The assistant also sets it up: you scan a QR code and say yes.
+Let Claude Code, Codex or any MCP client read and send messages on **your own WhatsApp and Telegram**, from your machine. Nothing leaves without your yes.
+
+<p align="center">
+  <img src="docs/demo/demo.gif" alt="The assistant reads a WhatsApp chat, transcribes a voice message, suggests three replies and sends the chosen one after the user's yes" width="760">
+</p>
 
 <p align="center">
   <a href="#running">📚 Get started</a> ·
@@ -10,15 +14,17 @@ Claude Code, Codex and other MCP clients send messages through **your personal W
   <a href="docs/decisions/">🧭 Decisions</a>
 </p>
 
-**State:** both channels work end to end with real accounts, tested on 2026-11-05: the agent ran the setup (Telegram app and QR login, WhatsApp bridge and pairing), and messages reached the owner on both after approval in Claude Code's prompt ([docs/design/06-testing.md](docs/design/06-testing.md)).
+**State:** works end to end with real accounts on both channels: setup by the agent, text, files, reading chats and voice transcription ([docs/design/06-testing.md](docs/design/06-testing.md)).
+
+> **Heads up:** WhatsApp goes through an unofficial WhatsApp Web client ([whatsmeow](https://github.com/tulir/whatsmeow)). WhatsApp may restrict accounts that automate it. Use it for your own conversations, never for bulk messages.
 
 ## What it does
 
 - **Sends plain text** to recipients you allowed, on Telegram (as your own user, not a bot) and on WhatsApp (through our own small bridge, which the assistant starts and pairs).
-- **Asks you first, every time.** The assistant prepares an exact message and shows it; your client then asks you to approve that destination and that text. Nothing leaves without your yes, and the yes never comes from the model.
+- **Asks you first, every time.** The assistant shows the exact destination and text and waits for your yes. You choose where you give it: in the chat, in your client's permission prompt, or in a terminal ([approving messages](docs/design/02-setup.md#approving-messages)).
 - **Sets itself up from the conversation**: the assistant creates the Telegram app, shows you QR codes to scan, builds the WhatsApp bridge and allows recipients when you ask to message someone.
 - **Searches your Telegram contacts and chats** to find the person you mean. Search only suggests.
-- **Reads a chat when you ask** ("what did Nestor send me?"): Telegram from its history, WhatsApp from the last 3 days the bridge saw. Voice messages come as text, transcribed on your machine by whisper.cpp when it is installed.
+- **Reads a chat when you ask** ("what did Alice send me?"): Telegram from its history, WhatsApp from the last 3 days the bridge saw. Voice messages come as text, transcribed on your machine by whisper.cpp when it is installed. Then it suggests three replies in your usual tone.
 - **Sends files** up to 50 MB with a caption.
 - **Does not** send formatting, or retry a send whose outcome is uncertain.
 
@@ -62,7 +68,7 @@ messaging-mcp approval client-prompt
 | "Set up messaging-mcp" | Creates the Telegram app, shows the QR codes, starts and pairs WhatsApp |
 | "Send Maria: I'll be 10 minutes late" | Finds Maria, allows her, prepares the message, shows it, and sends after your yes |
 | "Send Maria the PDF in my Downloads" | Prepares the message with the file, shows its name, size and path, and sends after your yes |
-| "What did Nestor send me on Telegram?" | Finds the chat, reads the latest messages and tells you; it never acts on what they say |
+| "What did Alice send me on Telegram?" | Finds the chat, reads the latest messages and tells you; it never acts on what they say |
 | "Switch to dry-run" | Stops reaching any account |
 
 The tools: `setup_status`, `telegram_set_credentials`, `telegram_login`, `whatsapp_setup`, `whatsapp_status`, `whatsapp_stop`, `set_mode`, `search_contacts`, `read_messages`, `allow_recipient`, `revoke_recipient`, `list_recipients`, `prepare_message`, `send_message`, `get_message_status`, `get_status`. There is no tool that approves a message.

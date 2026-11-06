@@ -183,7 +183,7 @@ func voiceText(seconds uint32, transcript *string) string {
 	return label + " " + *transcript
 }
 
-// fold lowercases and removes accents, so "Nestor" finds "néstor".
+// fold lowercases and removes accents, so "joao" finds "João".
 func fold(s string) string {
 	var b strings.Builder
 	for _, r := range norm.NFD.String(strings.ToLower(s)) {

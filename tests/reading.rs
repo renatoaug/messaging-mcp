@@ -68,11 +68,11 @@ fn with_reader(mode: &str, reader: Arc<FakeReader>) -> Fixture {
 
 #[tokio::test]
 async fn one_match_is_read_and_marked_as_data() {
-    let reader = reader(vec![person("user:1", "Nestor Silva")]);
+    let reader = reader(vec![person("user:1", "Alice Silva")]);
     let f = with_reader("live", reader.clone());
     let result = f
         .service
-        .read_messages(Channel::Telegram, "nestor", None)
+        .read_messages(Channel::Telegram, "alice", None)
         .await
         .unwrap();
     let ReadResult::Messages {
@@ -92,13 +92,13 @@ async fn one_match_is_read_and_marked_as_data() {
 #[tokio::test]
 async fn several_matches_are_listed_then_one_is_read_by_reference() {
     let reader = reader(vec![
-        person("user:1", "Nestor Silva"),
-        person("user:2", "Nestor Souza"),
+        person("user:1", "Alice Silva"),
+        person("user:2", "Alice Souza"),
     ]);
     let f = with_reader("live", reader.clone());
     let result = f
         .service
-        .read_messages(Channel::Telegram, "nestor", Some(5))
+        .read_messages(Channel::Telegram, "alice", Some(5))
         .await
         .unwrap();
     let ReadResult::Choose { matches, .. } = result else {
@@ -129,13 +129,13 @@ async fn several_matches_are_listed_then_one_is_read_by_reference() {
 #[tokio::test]
 async fn an_exact_name_wins_over_partial_matches() {
     let reader = reader(vec![
-        person("user:1", "Néstor"),
-        person("user:2", "Nestor Souza"),
+        person("user:1", "Álice"),
+        person("user:2", "Alice Souza"),
     ]);
     let f = with_reader("live", reader.clone());
     let result = f
         .service
-        .read_messages(Channel::Telegram, "nestor", None)
+        .read_messages(Channel::Telegram, "alice", None)
         .await
         .unwrap();
     let ReadResult::Messages { chat, .. } = result else {
@@ -167,13 +167,13 @@ async fn reading_is_live_only_and_validated() {
     let dry = with_reader("dry-run", reader.clone());
     let error = dry
         .service
-        .read_messages(Channel::Telegram, "nestor", None)
+        .read_messages(Channel::Telegram, "alice", None)
         .await
         .unwrap_err();
     assert_eq!(error.code, "LIVE_MODE_REQUIRED");
 
     let live = with_reader("live", reader.clone());
-    for (chat, limit) in [("n", None), ("nestor", Some(0)), ("nestor", Some(51))] {
+    for (chat, limit) in [("n", None), ("alice", Some(0)), ("alice", Some(51))] {
         let error = live
             .service
             .read_messages(Channel::Telegram, chat, limit)

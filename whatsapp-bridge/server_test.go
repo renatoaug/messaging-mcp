@@ -24,7 +24,7 @@ type fakeMessenger struct {
 
 func (f *fakeMessenger) Find(_ context.Context, query string) ([]Chat, error) {
 	f.queries = append(f.queries, query)
-	return []Chat{{JID: "5511988887777@s.whatsapp.net", Name: "Nestor"}}, f.err
+	return []Chat{{JID: "5511988887777@s.whatsapp.net", Name: "Alice"}}, f.err
 }
 
 func (f *fakeMessenger) Read(_ context.Context, chat types.JID, limit int) ([]Stored, error) {
@@ -73,7 +73,7 @@ func connected() *fakeMessenger {
 
 func TestEveryRouteRequiresTheToken(t *testing.T) {
 	h := newHandler(connected(), token)
-	for _, route := range [][2]string{{"GET", "/api/health"}, {"GET", "/api/qr"}, {"POST", "/api/send"}, {"GET", "/api/chats?q=nestor"}, {"GET", "/api/messages?chat=5511988887777@s.whatsapp.net&limit=5"}} {
+	for _, route := range [][2]string{{"GET", "/api/health"}, {"GET", "/api/qr"}, {"POST", "/api/send"}, {"GET", "/api/chats?q=alice"}, {"GET", "/api/messages?chat=5511988887777@s.whatsapp.net&limit=5"}} {
 		for _, auth := range []string{"", "Bearer wrong", token} {
 			if code, _ := request(t, h, route[0], route[1], auth, "{}"); code != http.StatusUnauthorized {
 				t.Fatalf("%s %s with %q: got %d", route[0], route[1], auth, code)
@@ -216,17 +216,17 @@ func TestChatsAreFoundByName(t *testing.T) {
 
 func TestMessagesAreReadFromOneChat(t *testing.T) {
 	m := connected()
-	m.messages = []Stored{{From: "Nestor", At: 1, Text: "oi"}, {From: "you", FromMe: true, At: 2, Text: "e ai"}}
+	m.messages = []Stored{{From: "Alice", At: 1, Text: "oi"}, {From: "you", FromMe: true, At: 2, Text: "e ai"}}
 	code, body := request(t, newHandler(m, token), "GET", "/api/messages?chat=5511988887777@s.whatsapp.net&limit=10", "Bearer "+token, "")
 	messages, _ := body["messages"].([]any)
 	if code != http.StatusOK || len(messages) != 2 || m.read[0] != "5511988887777@s.whatsapp.net" {
 		t.Fatalf("got %d %v, read %v", code, body, m.read)
 	}
 	first, _ := messages[0].(map[string]any)
-	if first["from"] != "Nestor" || first["text"] != "oi" || first["fromMe"] != false {
+	if first["from"] != "Alice" || first["text"] != "oi" || first["fromMe"] != false {
 		t.Fatalf("got %v", first)
 	}
-	for _, query := range []string{"chat=nestor&limit=5", "chat=5511988887777@s.whatsapp.net&limit=0", "chat=5511988887777@s.whatsapp.net&limit=51", "chat=5511988887777@s.whatsapp.net"} {
+	for _, query := range []string{"chat=alice&limit=5", "chat=5511988887777@s.whatsapp.net&limit=0", "chat=5511988887777@s.whatsapp.net&limit=51", "chat=5511988887777@s.whatsapp.net"} {
 		if code, _ := request(t, newHandler(m, token), "GET", "/api/messages?"+query, "Bearer "+token, ""); code != http.StatusBadRequest {
 			t.Fatalf("%s: got %d", query, code)
 		}
