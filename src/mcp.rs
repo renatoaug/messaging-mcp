@@ -45,7 +45,7 @@ pub fn status_report(service: &MessagingService) -> serde_json::Value {
             "telegram": config.telegram.is_some(),
         },
         "allowedRecipients": service.list_recipients().map_or(0, |recipients| recipients.len()),
-        "liveSendsRequireLocalApproval": true,
+        "approval": config.approval,
         "contactSearchAvailable": config.mode == Mode::Live && config.telegram.is_some(),
         "notice": "No accounts were contacted. setup_status shows what is missing.",
     })

@@ -4,8 +4,10 @@ use crate::adapters::telegram::TelegramAdapter;
 use crate::adapters::whatsapp::WhatsAppAdapter;
 use crate::config::Config;
 use crate::error::Error;
+use crate::secrets::process_env;
 use crate::service::{Adapters, MessagingService, Readers};
 use crate::store::PlanStore;
+use crate::transcribe::Transcriber;
 
 /// Wires the real adapters. Creating them contacts nobody: connections open only on a live send.
 pub fn create_app(config: Config) -> Result<MessagingService, Error> {
@@ -17,10 +19,10 @@ pub fn create_app(config: Config) -> Result<MessagingService, Error> {
         adapters.whatsapp = Some(whatsapp.clone());
         readers.whatsapp = Some(whatsapp);
     }
-    let telegram = config
-        .telegram
-        .clone()
-        .map(|settings| Arc::new(TelegramAdapter::new(settings)));
+    let telegram = config.telegram.clone().map(|settings| {
+        let transcriber = Transcriber::find(&config, &process_env);
+        Arc::new(TelegramAdapter::new(settings).with_transcriber(transcriber))
+    });
     if let Some(telegram) = &telegram {
         adapters.telegram = Some(telegram.clone());
         readers.telegram = Some(telegram.clone());

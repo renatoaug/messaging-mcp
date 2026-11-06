@@ -286,8 +286,34 @@ impl Setup {
                 "account": config.whatsapp.as_ref().and_then(|w| w.account_label.clone()),
             },
             "allowedRecipients": recipients,
-            "liveSendsRequireTerminalApproval": true,
+            "approval": config.approval,
+            "voiceTranscription": voice_transcription(config),
             "next": next,
         })
     }
+}
+
+/// Whether voice messages can be read as text, and, when not, what the agent can offer to do.
+fn voice_transcription(config: &crate::config::Config) -> serde_json::Value {
+    if !config.transcription.enabled {
+        return json!({ "available": false, "off": true });
+    }
+    if crate::transcribe::Transcriber::find(config, &crate::secrets::process_env).is_some() {
+        return json!({ "available": true });
+    }
+    let model = config
+        .transcription
+        .model
+        .clone()
+        .unwrap_or_else(|| config.base_dir.join("whisper").join("ggml-small.bin"));
+    json!({
+        "available": false,
+        "howToEnable": format!(
+            "Optional. Ask the user first (about 500 MB). Then install whisper.cpp and ffmpeg \
+             (macOS: brew install whisper-cpp ffmpeg) and download \
+             https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin to {} \
+             (mode 0600). Audio is transcribed on this machine only.",
+            model.display()
+        ),
+    })
 }

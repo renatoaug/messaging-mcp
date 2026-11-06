@@ -27,10 +27,27 @@ fn classify(error: InvocationError) -> TransportError {
         _ => TransportError::Failed,
     }
 }
+use crate::adapters::telegram::{ReadMessage, Voice};
 use crate::config::{TelegramConfig, TelegramPeer};
 use crate::error::{DeliveryError, Error, Outcome};
 use crate::identity::TELEGRAM_SESSION_ENV;
-use crate::plan::{ChatMessage, Contact, Receipt};
+use crate::plan::{Contact, Receipt};
+use crate::transcribe::MAX_AUDIO_BYTES;
+
+/// A voice message as grammers downloads it: its location, size and datacenter.
+struct VoiceFile<'a>(&'a Voice);
+
+impl grammers_client::media::Downloadable for VoiceFile<'_> {
+    fn to_raw_input_location(&self) -> Option<tl::enums::InputFileLocation> {
+        Some(self.0.location.clone())
+    }
+    fn size(&self) -> Option<usize> {
+        usize::try_from(self.0.size).ok()
+    }
+    fn dc_id(&self) -> Option<i32> {
+        Some(self.0.dc_id)
+    }
+}
 use crate::secrets::{process_env, secret_from};
 
 /// A sender pool that never retries on its own: an uncertain send must stay uncertain.
@@ -244,7 +261,7 @@ impl TelegramTransport for GrammersTransport {
         target: &TelegramPeer,
         chat_name: &str,
         limit: i32,
-    ) -> Result<Vec<ChatMessage>, TransportError> {
+    ) -> Result<Vec<ReadMessage>, TransportError> {
         let peer = input_peer(target).ok_or(TransportError::Failed)?;
         let history = self
             .client
@@ -252,6 +269,18 @@ impl TelegramTransport for GrammersTransport {
             .await
             .map_err(|_| TransportError::Failed)?;
         Ok(messages_from_history(&history, chat_name))
+    }
+
+    async fn download(&self, voice: &Voice) -> Result<Vec<u8>, TransportError> {
+        let mut chunks = self.client.iter_download(&VoiceFile(voice));
+        let mut audio = Vec::new();
+        while let Some(chunk) = chunks.next().await.map_err(|_| TransportError::Failed)? {
+            audio.extend_from_slice(&chunk);
+            if audio.len() > MAX_AUDIO_BYTES {
+                return Err(TransportError::Failed);
+            }
+        }
+        Ok(audio)
     }
 
     async fn close(&self) -> Result<(), TransportError> {

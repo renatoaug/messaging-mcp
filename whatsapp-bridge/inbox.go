@@ -82,6 +82,12 @@ func (in *Inbox) Add(ctx context.Context, m Stored) error {
 	return in.Prune(ctx)
 }
 
+// SetText replaces a kept message's text, as when its voice message was transcribed.
+func (in *Inbox) SetText(ctx context.Context, chat, id, text string) error {
+	_, err := in.db.ExecContext(ctx, "UPDATE message SET text = ? WHERE chat = ? AND id = ?", text, chat, id)
+	return err
+}
+
 // Recent returns a chat's last messages, oldest first.
 func (in *Inbox) Recent(ctx context.Context, chat string, limit int) ([]Stored, error) {
 	rows, err := in.db.QueryContext(ctx,
@@ -149,7 +155,7 @@ func messageText(m *waE2E.Message) string {
 		d := m.GetDocumentMessage()
 		return label(fmt.Sprintf("[file: %s]", d.GetFileName()), d.GetCaption())
 	case m.GetAudioMessage() != nil:
-		return "[audio]"
+		return voiceText(m.GetAudioMessage().GetSeconds(), nil)
 	case m.GetStickerMessage() != nil:
 		return "[sticker]"
 	case m.GetContactMessage() != nil:
@@ -162,6 +168,19 @@ func messageText(m *waE2E.Message) string {
 		return "[view once]"
 	}
 	return ""
+}
+
+// voiceText is how a voice message reads: its length, then what was said. It matches
+// messaging-mcp's own label for Telegram.
+func voiceText(seconds uint32, transcript *string) string {
+	label := fmt.Sprintf("[audio %d:%02d]", seconds/60, seconds%60)
+	switch {
+	case transcript == nil:
+		return label + " (not transcribed)"
+	case *transcript == "":
+		return label + " (nothing said)"
+	}
+	return label + " " + *transcript
 }
 
 // fold lowercases and removes accents, so "Nestor" finds "néstor".

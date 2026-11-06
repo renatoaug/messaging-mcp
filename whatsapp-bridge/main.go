@@ -42,10 +42,11 @@ const (
 )
 
 type whatsapp struct {
-	client *whatsmeow.Client
-	inbox  *Inbox
-	mu     sync.Mutex
-	qr     string
+	client      *whatsmeow.Client
+	inbox       *Inbox
+	transcriber *Transcriber
+	mu          sync.Mutex
+	qr          string
 }
 
 var errNoInbox = errors.New("messages are not available")
@@ -77,7 +78,9 @@ func (w *whatsapp) keep(ctx context.Context, info types.MessageInfo, message *wa
 	}
 	if err := w.inbox.Add(ctx, stored); err != nil {
 		log.Print("could not keep a message")
+		return
 	}
+	w.queueVoice(stored.Chat, info, message)
 }
 
 func (w *whatsapp) Find(ctx context.Context, query string) ([]Chat, error) {
@@ -225,6 +228,8 @@ func loadToken(storeDir string) (string, error) {
 func run() error {
 	storeDir := flag.String("store", "store", "folder for the session and the token, created 0700")
 	port := flag.Int("port", 8080, "port on 127.0.0.1")
+	transcriber := flag.String("transcriber", "", "messaging-mcp, to transcribe voice messages")
+	configPath := flag.String("config", "", "messaging-mcp's config, for the transcriber")
 	flag.Parse()
 	if err := os.MkdirAll(*storeDir, 0o700); err != nil {
 		return err
@@ -259,6 +264,12 @@ func run() error {
 	} else {
 		bridge.inbox = inbox
 		defer inbox.Close()
+		if bridge.transcriber = NewTranscriber(*transcriber, *configPath, *storeDir); bridge.transcriber != nil {
+			download := func(ctx context.Context, audio *waE2E.AudioMessage) ([]byte, error) {
+				return client.Download(ctx, audio)
+			}
+			go bridge.transcriber.Run(ctx, download, inbox)
+		}
 	}
 
 	exit := make(chan int, 1)

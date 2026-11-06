@@ -174,7 +174,7 @@ async fn an_mcp_client_lists_only_safe_tools_and_persists_both_dry_run_channels(
     // Setup through MCP: the agent allows a recipient and changes the mode, and the server
     // reloads the config without a restart. A live plan still needs the owner's approval.
     let setup = call("setup_status", json!({})).await;
-    assert_eq!(setup["liveSendsRequireTerminalApproval"], true);
+    assert_eq!(setup["approval"], "terminal");
     let allowed = call(
         "allow_recipient",
         json!({ "id": "ana", "label": "Ana", "whatsappJid": "5511977776666@s.whatsapp.net" }),

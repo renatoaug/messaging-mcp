@@ -71,7 +71,7 @@ func TestMessageTextLabelsMediaAndSkipsTheRest(t *testing.T) {
 		{&waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String("link")}}, "link"},
 		{&waE2E.Message{ImageMessage: &waE2E.ImageMessage{Caption: proto.String("look")}}, "[photo] look"},
 		{&waE2E.Message{DocumentMessage: &waE2E.DocumentMessage{FileName: proto.String("a.pdf")}}, "[file: a.pdf]"},
-		{&waE2E.Message{AudioMessage: &waE2E.AudioMessage{}}, "[audio]"},
+		{&waE2E.Message{AudioMessage: &waE2E.AudioMessage{Seconds: proto.Uint32(75)}}, "[audio 1:15] (not transcribed)"},
 		{&waE2E.Message{ReactionMessage: &waE2E.ReactionMessage{Text: proto.String("x")}}, ""},
 		{nil, ""},
 	} {

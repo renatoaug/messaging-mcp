@@ -148,7 +148,8 @@ async fn status_lists_the_next_steps_and_the_mode_can_change() {
     let status = setup.status(&load_config_from(&path).unwrap(), 0).await;
     assert_eq!(status["mode"], "dry-run");
     assert_eq!(status["whatsapp"]["bridgeRunning"], false);
-    assert_eq!(status["liveSendsRequireTerminalApproval"], true);
+    assert_eq!(status["approval"], "terminal");
+    assert!(status["voiceTranscription"]["available"].is_boolean());
     let next: Vec<&str> = status["next"]
         .as_array()
         .unwrap()

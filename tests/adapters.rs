@@ -12,6 +12,7 @@ use messaging_mcp::adapters::telegram::{
     messages_from_history, receipt_from, rejection, send_media_request, send_request,
     telegram_random_id, upload_parts, uploaded_file,
 };
+use messaging_mcp::adapters::telegram::{ReadMessage, Voice};
 use messaging_mcp::adapters::whatsapp::WhatsAppAdapter;
 use messaging_mcp::attachment::{Kind, Outgoing, OutgoingFile};
 use messaging_mcp::config::{Recipient, TelegramPeer, WhatsAppConfig};
@@ -221,16 +222,45 @@ impl TelegramTransport for FakeTransport {
         target: &TelegramPeer,
         chat_name: &str,
         limit: i32,
-    ) -> Result<Vec<ChatMessage>, TransportError> {
+    ) -> Result<Vec<ReadMessage>, TransportError> {
         self.events.0.lock().unwrap().push("history");
         assert_eq!(target, &TelegramPeer::Myself);
         assert_eq!(limit, 5);
-        Ok(vec![ChatMessage {
+        let message = |text: &str| ChatMessage {
             from: chat_name.to_string(),
             from_me: false,
             at: 1,
-            text: "oi".to_string(),
-        }])
+            text: text.to_string(),
+        };
+        Ok(vec![
+            ReadMessage {
+                message: message("oi"),
+                voice: None,
+                caption: String::new(),
+            },
+            ReadMessage {
+                message: message("[audio 0:42] (not transcribed)"),
+                voice: Some(Voice {
+                    id: 77,
+                    location: tl::types::InputDocumentFileLocation {
+                        id: 77,
+                        access_hash: 1,
+                        file_reference: vec![],
+                        thumb_size: String::new(),
+                    }
+                    .into(),
+                    size: 10,
+                    dc_id: 1,
+                    seconds: Some(42),
+                }),
+                caption: "ouve".to_string(),
+            },
+        ])
+    }
+    async fn download(&self, voice: &Voice) -> Result<Vec<u8>, TransportError> {
+        self.events.0.lock().unwrap().push("download");
+        assert_eq!(voice.id, 77);
+        Ok(b"opus bytes".to_vec())
     }
     async fn close(&self) -> Result<(), TransportError> {
         self.events.0.lock().unwrap().push("close");
@@ -644,7 +674,10 @@ fn telegram_history_reads_oldest_first_with_who_wrote_each() {
     let read = messages_from_history(&history, "Nestor");
     let summary: Vec<(&str, bool, i64, &str)> = read
         .iter()
-        .map(|m| (m.from.as_str(), m.from_me, m.at, m.text.as_str()))
+        .map(|m| {
+            let m = &m.message;
+            (m.from.as_str(), m.from_me, m.at, m.text.as_str())
+        })
         .collect();
     assert_eq!(
         summary,
@@ -672,11 +705,38 @@ async fn telegram_reads_a_chat_and_closes() {
     };
     let read = adapter.read(&chat, 5).await.unwrap();
     assert_eq!(read[0].from, "Saved");
+    assert_eq!(read[1].text, "[audio 0:42] (not transcribed)");
     assert_eq!(
         *events.0.lock().unwrap(),
         ["authorized", "history", "close"]
     );
     assert_eq!(sends.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn telegram_transcribes_a_voice_message_once() {
+    let tools = tempfile::Builder::new().prefix("tools").tempdir().unwrap();
+    let transcriber = fake_transcriber(tools.path(), "olá, tudo bem?");
+    let (adapter, events, _) = telegram(READY, 1000);
+    let adapter = adapter.with_transcriber(Some(transcriber));
+    let chat = ChatMatch {
+        channel: Channel::Telegram,
+        reference: "self".to_string(),
+        name: "Saved".to_string(),
+        target: ChatTarget::Telegram(TelegramPeer::Myself),
+    };
+    let read = adapter.read(&chat, 5).await.unwrap();
+    assert_eq!(read[1].text, "[audio 0:42] olá, tudo bem? ouve");
+    let again = adapter.read(&chat, 5).await.unwrap();
+    assert_eq!(again[1].text, read[1].text);
+    let downloads = events
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|e| **e == "download")
+        .count();
+    assert_eq!(downloads, 1, "a transcript is remembered");
 }
 
 #[tokio::test]
@@ -775,5 +835,29 @@ fn telegram_refusals_are_not_sent_and_server_errors_stay_uncertain() {
             rejection(code, "INTERNAL", None).is_none(),
             "{code} stays uncertain"
         );
+    }
+}
+
+/// A transcriber whose ffmpeg copies the file and whose whisper-cli prints `text`, with the
+/// markers whisper.cpp adds for silence.
+fn fake_transcriber(dir: &std::path::Path, text: &str) -> messaging_mcp::transcribe::Transcriber {
+    use std::os::unix::fs::PermissionsExt;
+    let script = |name: &str, body: &str| {
+        let path = dir.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        path
+    };
+    let work = dir.join("work");
+    messaging_mcp::transcribe::Transcriber {
+        // The input is the 6th argument, the output the last.
+        ffmpeg: script("ffmpeg", r#"eval last=\${$#}; cp "$6" "$last""#),
+        whisper: script(
+            "whisper-cli",
+            &format!("printf '[BLANK_AUDIO]\\n  {text}  \\n'"),
+        ),
+        model: dir.join("model.bin"),
+        language: "pt".to_string(),
+        work_dir: work,
     }
 }

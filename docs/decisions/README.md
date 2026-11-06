@@ -55,3 +55,4 @@ What this makes easier, what it makes harder, what to watch. (bullets)
 | [ADR-010](ADR-010-the-agent-can-be-the-approval.md) | The owner can let the agent's chat confirmation be the approval | Accepted |
 | [ADR-011](ADR-011-files-are-copied-when-prepared.md) | A file is checked and copied when the message is prepared | Accepted |
 | [ADR-012](ADR-012-read-chats-when-the-owner-asks.md) | Read a chat when the owner asks, and keep three days of WhatsApp messages | Accepted |
+| [ADR-013](ADR-013-transcribe-voice-messages-locally.md) | Voice messages are transcribed on this machine | Accepted |

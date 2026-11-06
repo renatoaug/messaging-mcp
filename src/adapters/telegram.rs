@@ -22,12 +22,17 @@ use crate::plan::{
 };
 use crate::secrets::{Env, secret_from};
 use crate::service::sha256_hex;
+use crate::transcribe::{MAX_AUDIO_BYTES, Transcriber};
 
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(3);
 /// Uploading 50 MB, part by part. A timeout here still means nothing was sent.
 const UPLOAD_TIMEOUT: Duration = Duration::from_secs(300);
 /// Sending media after the upload; Telegram processes a photo before it answers.
 const MEDIA_SEND_TIMEOUT: Duration = Duration::from_secs(60);
+/// At most this many voice messages are transcribed per read, the latest first.
+const MAX_VOICES: usize = 10;
+/// Downloading one voice message.
+const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(60);
 /// Telegram's part size for uploads (it accepts up to 512 KB per part).
 pub const UPLOAD_PART_BYTES: usize = 512 * 1024;
 /// Files above this go through the big file upload.
@@ -64,7 +69,9 @@ pub trait TelegramTransport: Send + Sync {
         target: &TelegramPeer,
         chat_name: &str,
         limit: i32,
-    ) -> Result<Vec<ChatMessage>, TransportError>;
+    ) -> Result<Vec<ReadMessage>, TransportError>;
+    /// Downloads a voice message, at most `MAX_AUDIO_BYTES`. Read only.
+    async fn download(&self, voice: &Voice) -> Result<Vec<u8>, TransportError>;
     async fn close(&self) -> Result<(), TransportError>;
 }
 
@@ -170,6 +177,9 @@ fn not_authorized() -> DeliveryError {
 pub struct TelegramAdapter {
     timeout: Duration,
     create_transport: TransportFactory,
+    transcriber: Option<Transcriber>,
+    /// Transcripts by Telegram document ID, so reading a chat twice transcribes once.
+    transcripts: std::sync::Mutex<std::collections::HashMap<i64, String>>,
 }
 
 impl TelegramAdapter {
@@ -186,6 +196,65 @@ impl TelegramAdapter {
         Self {
             timeout,
             create_transport,
+            transcriber: None,
+            transcripts: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+
+    /// Transcribes voice messages when reading a chat.
+    pub fn with_transcriber(mut self, transcriber: Option<Transcriber>) -> Self {
+        self.transcriber = transcriber;
+        self
+    }
+
+    /// Replaces the `(not transcribed)` text of the latest voice messages with what was said.
+    async fn transcribe_voices(&self, transport: &dyn TelegramTransport, read: &mut [ReadMessage]) {
+        let Some(transcriber) = &self.transcriber else {
+            return;
+        };
+        let voices = read
+            .iter_mut()
+            .rev()
+            .filter(|read| {
+                read.voice
+                    .as_ref()
+                    .is_some_and(|voice| voice.size as usize <= MAX_AUDIO_BYTES)
+            })
+            .take(MAX_VOICES);
+        for read in voices {
+            let Some(voice) = read.voice.clone() else {
+                continue;
+            };
+            let known = self
+                .transcripts
+                .lock()
+                .ok()
+                .and_then(|known| known.get(&voice.id).cloned());
+            let transcript = match known {
+                Some(text) => Some(text),
+                None => {
+                    let audio = timeout(DOWNLOAD_TIMEOUT, transport.download(&voice)).await;
+                    let text = match audio {
+                        Ok(Ok(audio)) => transcriber
+                            .transcribe(&audio, &format!("telegram-{}", voice.id))
+                            .await
+                            .ok(),
+                        _ => None,
+                    };
+                    if let (Some(text), Ok(mut known)) = (&text, self.transcripts.lock()) {
+                        known.insert(voice.id, text.clone());
+                    }
+                    text
+                }
+            };
+            if let Some(transcript) = transcript {
+                let text = crate::transcribe::voice_text(voice.seconds, Some(&transcript));
+                read.message.text = if read.caption.is_empty() {
+                    text
+                } else {
+                    format!("{text} {}", read.caption)
+                };
+            }
         }
     }
 
@@ -317,8 +386,16 @@ impl MessageReader for TelegramAdapter {
             .await
             .map_err(|error| Error::new(error.code, error.message))?;
         let result = timeout(self.timeout, transport.history(peer, &chat.name, limit)).await;
+        let mut read = match result {
+            Ok(Ok(read)) => read,
+            _ => {
+                close(transport.as_ref()).await;
+                return Err(failed());
+            }
+        };
+        self.transcribe_voices(transport.as_ref(), &mut read).await;
         close(transport.as_ref()).await;
-        result.map_err(|_| failed())?.map_err(|_| failed())
+        Ok(read.into_iter().map(|read| read.message).collect())
     }
 }
 
@@ -592,12 +669,66 @@ fn media_label(media: &tl::enums::MessageMedia) -> &'static str {
     }
 }
 
+/// A voice message or audio file to download and transcribe.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Voice {
+    /// Telegram's document ID, to remember a transcript.
+    pub id: i64,
+    pub location: tl::enums::InputFileLocation,
+    pub size: i64,
+    pub dc_id: i32,
+    pub seconds: Option<u32>,
+}
+
+/// A message read from a chat, with its voice message when it has one.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReadMessage {
+    pub message: ChatMessage,
+    pub voice: Option<Voice>,
+    /// The caption that goes after the transcript.
+    pub caption: String,
+}
+
+/// The voice message or audio file in a message's media, if any.
+pub fn voice_of(media: &tl::enums::MessageMedia) -> Option<Voice> {
+    let tl::enums::MessageMedia::Document(media) = media else {
+        return None;
+    };
+    let Some(tl::enums::Document::Document(document)) = &media.document else {
+        return None;
+    };
+    let seconds = document
+        .attributes
+        .iter()
+        .find_map(|attribute| match attribute {
+            tl::enums::DocumentAttribute::Audio(audio) => Some(u32::try_from(audio.duration).ok()),
+            _ => None,
+        });
+    let is_audio = media.voice || seconds.is_some() || document.mime_type.starts_with("audio/");
+    if !is_audio {
+        return None;
+    }
+    Some(Voice {
+        id: document.id,
+        location: tl::types::InputDocumentFileLocation {
+            id: document.id,
+            access_hash: document.access_hash,
+            file_reference: document.file_reference.clone(),
+            thumb_size: String::new(),
+        }
+        .into(),
+        size: document.size,
+        dc_id: document.dc_id,
+        seconds: seconds.flatten(),
+    })
+}
+
 /// The messages of a history answer, oldest first, with who wrote each. Service messages (joins,
 /// pins) are left out. `chat_name` names the other side of a private chat.
 pub fn messages_from_history(
     history: &tl::enums::messages::Messages,
     chat_name: &str,
-) -> Vec<ChatMessage> {
+) -> Vec<ReadMessage> {
     let (messages, users) = match history {
         tl::enums::messages::Messages::Messages(m) => (&m.messages, &m.users),
         tl::enums::messages::Messages::Slice(m) => (&m.messages, &m.users),
@@ -617,7 +748,7 @@ pub fn messages_from_history(
             _ => None,
         })
     };
-    let mut read: Vec<ChatMessage> = messages
+    let mut read: Vec<ReadMessage> = messages
         .iter()
         .filter_map(|message| match message {
             tl::enums::Message::Message(message) => {
@@ -631,23 +762,38 @@ pub fn messages_from_history(
                         _ => chat_name.to_string(),
                     }
                 };
-                let text = match &message.media {
-                    Some(media) if message.message.is_empty() => media_label(media).to_string(),
-                    Some(media) => format!("{} {}", media_label(media), message.message),
-                    None => message.message.clone(),
+                let voice = message.media.as_ref().and_then(voice_of);
+                let text = match (&message.media, &voice) {
+                    (_, Some(voice)) => {
+                        let text = crate::transcribe::voice_text(voice.seconds, None);
+                        if message.message.is_empty() {
+                            text
+                        } else {
+                            format!("{text} {}", message.message)
+                        }
+                    }
+                    (Some(media), None) if message.message.is_empty() => {
+                        media_label(media).to_string()
+                    }
+                    (Some(media), None) => format!("{} {}", media_label(media), message.message),
+                    (None, None) => message.message.clone(),
                 };
-                Some(ChatMessage {
-                    from,
-                    from_me: message.out,
-                    at: i64::from(message.date) * 1000,
-                    text,
+                Some(ReadMessage {
+                    message: ChatMessage {
+                        from,
+                        from_me: message.out,
+                        at: i64::from(message.date) * 1000,
+                        text,
+                    },
+                    voice,
+                    caption: message.message.clone(),
                 })
             }
             _ => None,
         })
         .collect();
     // Telegram answers newest first.
-    read.sort_by_key(|message| message.at);
+    read.sort_by_key(|read| read.message.at);
     read
 }
 
