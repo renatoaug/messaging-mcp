@@ -31,6 +31,7 @@ Messaging MCP can send messages as you. Message content, web pages, contact name
 12. **Config edits made by hand need a reconnect** of each MCP process (`/mcp` in Claude Code). Changes made through the setup tools and recipients added with `allow` take effect immediately.
 13. **Files.** The agent can attach any file you can read, except hidden files, anything in a hidden folder (`~/.ssh`, `~/.config`, `.env`, `.git`) and messaging-mcp's own folders. Each file is copied when prepared and shown to you with its name, size, path and SHA-256 ([ADR-011](docs/decisions/ADR-011-files-are-copied-when-prepared.md)). Check the file before you say yes: with `agent` approval nothing else stands between an agent's mistake and the recipient.
 14. **Reading puts other people's words in front of the model.** `read_messages` reads any chat, only when you ask, and marks the text as data. A message can still try to instruct the agent; with `agent` approval, only the agent's instructions stop it from sending to someone you allowed ([ADR-012](docs/decisions/ADR-012-read-chats-when-the-owner-asks.md)).
+15. **Voice messages are transcribed on this machine** by whisper.cpp ([ADR-013](docs/decisions/ADR-013-transcribe-voice-messages-locally.md)). The audio is written to a private temporary file and deleted after the transcription; on WhatsApp only the transcript is kept, for the same 3 days. Transcripts can be wrong; nothing from the tools is logged or shown in an error.
 
 ## Secrets
 

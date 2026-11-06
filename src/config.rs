@@ -246,6 +246,9 @@ pub struct Config {
     pub recipients: Vec<Recipient>,
     pub whatsapp: Option<WhatsAppConfig>,
     pub telegram: Option<TelegramConfig>,
+    /// Voice messages as text, on this machine.
+    #[serde(default)]
+    pub transcription: crate::transcribe::TranscriptionConfig,
     /// The config file's folder, set when it is read.
     #[serde(skip)]
     pub base_dir: PathBuf,

@@ -134,7 +134,14 @@ fn final_page(exit: Option<i32>) -> String {
 /// of codes per attempt, so four attempts give the owner about 10 minutes to scan.
 const PAIRING_ATTEMPTS: u32 = 4;
 
-fn spawn_bridge(binary: &Path, paths: &BridgePaths, port: u16) -> Result<Child, Error> {
+/// `exe` and `config` let the bridge run `messaging-mcp transcribe` on arriving voice messages.
+fn spawn_bridge(
+    binary: &Path,
+    paths: &BridgePaths,
+    port: u16,
+    exe: &Path,
+    config: &Path,
+) -> Result<Child, Error> {
     let log = OpenOptions::new()
         .create(true)
         .append(true)
@@ -149,6 +156,10 @@ fn spawn_bridge(binary: &Path, paths: &BridgePaths, port: u16) -> Result<Child, 
         .arg(paths.store())
         .arg("-port")
         .arg(port.to_string())
+        .arg("-transcriber")
+        .arg(exe)
+        .arg("-config")
+        .arg(config)
         .stdin(Stdio::null())
         .stdout(log)
         .stderr(log_errors)
@@ -192,7 +203,12 @@ async fn follow(child: &mut Child, paths: &BridgePaths, port: u16, page: &Path) 
 /// Runs the bridge, keeping the page current, and starts it again when a pairing times out
 /// unscanned, up to [`PAIRING_ATTEMPTS`] times. This is the body of
 /// `messaging-mcp whatsapp-bridge-supervise`.
-pub async fn supervise(paths: &BridgePaths, port: u16, page: &Path) -> Result<(), Error> {
+pub async fn supervise(
+    paths: &BridgePaths,
+    port: u16,
+    page: &Path,
+    config: &Path,
+) -> Result<(), Error> {
     let exe = std::env::current_exe().map_err(|_| bridge_error("Could not find messaging-mcp."))?;
     let binary = bridge_binary(&exe).ok_or_else(|| bridge_error("No bridge binary."))?;
     // A fresh log for each supervisor; attempts within it append.
@@ -200,7 +216,7 @@ pub async fn supervise(paths: &BridgePaths, port: u16, page: &Path) -> Result<()
     write_private_file(&paths.pid(), std::process::id().to_string().as_bytes())?;
     let mut attempts = 1;
     let exit = loop {
-        let mut child = spawn_bridge(&binary, paths, port)?;
+        let mut child = spawn_bridge(&binary, paths, port, &exe, config)?;
         let exit = follow(&mut child, paths, port, page).await;
         if exit == Some(EXIT_PAIRING_TIMED_OUT) && attempts < PAIRING_ATTEMPTS {
             attempts += 1;

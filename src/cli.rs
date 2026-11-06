@@ -24,6 +24,7 @@ use crate::setup::approval;
 use crate::setup::bridge_process;
 use crate::setup::config_file::ensure_config;
 use crate::setup::whatsapp_bridge::{BridgePaths, DEFAULT_PORT, port_from_base_url};
+use crate::transcribe::Transcriber;
 
 /// Dependency-free timestamp formatting for the approval prompt.
 mod chrono_free {
@@ -106,6 +107,9 @@ enum Command {
         #[arg(value_enum)]
         mode: ApprovalMode,
     },
+    /// Internal: prints the text of a voice message file, for the WhatsApp bridge.
+    #[command(hide = true)]
+    Transcribe { file: PathBuf },
     /// Internal: runs the WhatsApp bridge and keeps its pairing page current. Started by
     /// whatsapp_setup.
     #[command(hide = true)]
@@ -363,6 +367,21 @@ async fn run_setup_command(command: &Command, path: &std::path::Path) -> Result<
             let (config, clients) = approval::set_approval(path, approval, &process_env)?;
             print_json(&json!({ "approval": config.approval, "clients": clients }))?;
         }
+        Command::Transcribe { file } => {
+            let config = load_config_from(path)?;
+            let unavailable = || {
+                Error::new(
+                    "TRANSCRIPTION_UNAVAILABLE",
+                    "Transcription is off, or ffmpeg, whisper-cli or the model is missing.",
+                )
+            };
+            let transcriber = Transcriber::find(&config, &process_env).ok_or_else(unavailable)?;
+            let audio = crate::secrets::read_private_bytes(file).map_err(|_| unavailable())?;
+            let text = transcriber
+                .transcribe(&audio, &format!("cli-{}", std::process::id()))
+                .await?;
+            println!("{text}");
+        }
         Command::WhatsappBridgeSupervise { page } => {
             let config = load_config_from(path)?;
             let port = config
@@ -370,7 +389,7 @@ async fn run_setup_command(command: &Command, path: &std::path::Path) -> Result<
                 .as_ref()
                 .and_then(|whatsapp| port_from_base_url(&whatsapp.base_url))
                 .unwrap_or(DEFAULT_PORT);
-            bridge_process::supervise(&bridge(), port, page).await?;
+            bridge_process::supervise(&bridge(), port, page, path).await?;
         }
         _ => return Ok(false),
     }
@@ -415,6 +434,7 @@ async fn run(cli: Cli) -> Result<ExitCode, Error> {
         | Command::TelegramCredentials
         | Command::WhatsappBridgeStop
         | Command::Approval { .. }
+        | Command::Transcribe { .. }
         | Command::WhatsappBridgeSupervise { .. } => {}
     }
     Ok(ExitCode::SUCCESS)

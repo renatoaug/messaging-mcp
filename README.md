@@ -18,7 +18,7 @@ Claude Code, Codex and other MCP clients send messages through **your personal W
 - **Asks you first, every time.** The assistant prepares an exact message and shows it; your client then asks you to approve that destination and that text. Nothing leaves without your yes, and the yes never comes from the model.
 - **Sets itself up from the conversation**: the assistant creates the Telegram app, shows you QR codes to scan, builds the WhatsApp bridge and allows recipients when you ask to message someone.
 - **Searches your Telegram contacts and chats** to find the person you mean. Search only suggests.
-- **Reads a chat when you ask** ("what did Nestor send me?"): Telegram from its history, WhatsApp from the last 3 days the bridge saw.
+- **Reads a chat when you ask** ("what did Nestor send me?"): Telegram from its history, WhatsApp from the last 3 days the bridge saw. Voice messages come as text, transcribed on your machine by whisper.cpp when it is installed.
 - **Sends files** up to 50 MB with a caption.
 - **Does not** send formatting, or retry a send whose outcome is uncertain.
 

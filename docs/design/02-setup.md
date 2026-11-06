@@ -80,6 +80,13 @@ The setup tools write it; editing by hand works too, followed by a reconnect. Re
 | `telegram.sessionFile` | Written by the login | — |
 | `telegram.expectedUserId` | Your Telegram user ID; the login sets it | — |
 | `telegram.timeoutMs` | 100–120000 | `20000` |
+| `transcription.enabled` | Transcribe voice messages when `whisper-cli`, `ffmpeg` and the model are present | `true` |
+| `transcription.language` | `auto`, or a language code such as `pt`; a fixed language is more accurate on short messages | `auto` |
+| `transcription.model` | The whisper.cpp model | `whisper/ggml-small.bin` next to the config |
+
+## Voice transcription
+
+Optional ([ADR-013](../decisions/ADR-013-transcribe-voice-messages-locally.md)). `setup_status` reports `voiceTranscription.available`, and when it is false, how to enable it: install `whisper-cli` and `ffmpeg` (`brew install whisper-cpp ffmpeg` on macOS) and download `ggml-small.bin` (466 MB, from `huggingface.co/ggerganov/whisper.cpp`) into `whisper/` next to the config, mode 0600. The agent asks the user before it does. The tools are found on `PATH`, then in `/opt/homebrew/bin`, `/usr/local/bin` and `/usr/bin`, since an MCP client's `PATH` can be short. `messaging-mcp transcribe FILE` (hidden) prints the text of one audio file; the WhatsApp bridge uses it.
 
 ## Secrets
 
