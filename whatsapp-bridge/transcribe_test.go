@@ -19,7 +19,8 @@ func fakeTranscriber(t *testing.T) string {
 	script := filepath.Join(t.TempDir(), "messaging-mcp")
 	body := `#!/bin/sh
 [ "$1" = "--config" ] && [ "$3" = "transcribe" ] || exit 2
-[ "$(stat -f %Lp "$4" 2>/dev/null || stat -c %a "$4")" = "600" ] || exit 3
+# GNU stat first: BSD stat rejects -c, while GNU stat -f means something else and succeeds.
+[ "$(stat -c %a "$4" 2>/dev/null || stat -f %Lp "$4")" = "600" ] || exit 3
 [ "$(cat "$4")" = "opus bytes" ] || exit 4
 echo "  oi, tudo bem?  "
 `
