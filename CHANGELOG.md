@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.0](https://github.com/renatoaug/messaging-mcp/compare/v0.7.0...v0.8.0) (2026-11-06)
+
+### Features
+
+* transcribe voice messages on this machine ([#2](https://github.com/renatoaug/messaging-mcp/issues/2)) ([876f921](https://github.com/renatoaug/messaging-mcp/commit/876f921aa4ceb2cc7772ecc4c41cf7943c8322df))
+
 ## [0.7.0](https://github.com/renatoaug/messaging-mcp/compare/v0.6.0...v0.7.0) (2026-11-06)
 
 ### Features
