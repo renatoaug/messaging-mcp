@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.0](https://github.com/renatoaug/messaging-mcp/compare/v0.4.0...v0.5.0) (2026-11-06)
+
+### Features
+
+* send files with a message ([bfdec7f](https://github.com/renatoaug/messaging-mcp/commit/bfdec7f7b05988a7093c5b9fcc035a4cd08e9f97))
+
 ## [0.4.0](https://github.com/renatoaug/messaging-mcp/compare/v0.3.1...v0.4.0) (2026-11-05)
 
 ### Features
