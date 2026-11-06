@@ -67,7 +67,7 @@ Tests live in `tests/`, offline. Inject fake adapters, transports, clocks and en
 
 ## Documentation
 
-How to run and configure Messaging MCP is in `README.md` and `docs/`. A decision that shapes the code gets a record in `docs/decisions/`, following the template in `docs/decisions/README.md`. Docs are in English. Do not hard-wrap Markdown: each paragraph or list item stays on one line.
+How to run and configure Messaging MCP is in `README.md` and `docs/`. Docs describe the code as it is today, including its limits as plain facts; planned or untested work goes in GitHub issues, never in a to-do list in a doc. A decision that shapes the code gets a record in `docs/decisions/`, following the template in `docs/decisions/README.md`. Docs are in English. Do not hard-wrap Markdown: each paragraph or list item stays on one line.
 
 ## Commits and pull requests
 

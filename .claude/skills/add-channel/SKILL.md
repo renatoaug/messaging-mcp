@@ -49,4 +49,4 @@ A channel is an adapter that turns one approved plan into one provider call and 
 - [ ] Every error path is `NotSent` or `Unknown` per the table, with a test each
 - [ ] No provider text reaches an error
 - [ ] Record, design note and indexes updated
-- [ ] What still needs a real account is listed under "Still open"
+- [ ] What still needs a real account is said in the PR, and opened as an issue if it stays untested
