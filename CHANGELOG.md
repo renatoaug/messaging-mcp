@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.6.0](https://github.com/renatoaug/messaging-mcp/compare/v0.5.0...v0.6.0) (2026-11-06)
+
+### Features
+
+* read a chat when the owner asks ([be13285](https://github.com/renatoaug/messaging-mcp/commit/be13285d62f64ca82fee7617be8d2c038b0f451e))
+
 ## [0.5.0](https://github.com/renatoaug/messaging-mcp/compare/v0.4.0...v0.5.0) (2026-11-06)
 
 ### Features
