@@ -8,9 +8,9 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use common::*;
-use messaging_mcp::attachment::{Kind, MAX_FILE_BYTES, copy_path};
+use messaging_mcp::attachment::{Kind, MAX_FILE_BYTES, copy_path, files_dir as attachment_dir};
 use messaging_mcp::plan::Status;
-use messaging_mcp::service::PrepareInput;
+use messaging_mcp::service::{PrepareInput, Swept};
 use serde_json::json;
 use tempfile::TempDir;
 
@@ -188,4 +188,56 @@ async fn a_dry_run_with_a_file_simulates_and_cleans_up() {
     assert_eq!(sent.status, Status::Simulated);
     assert_eq!(adapter.count(), 0);
     assert!(!copy_path(&f.config.state_dir, &plan.id).exists());
+}
+
+#[test]
+fn the_sweep_removes_old_plans_and_copies_that_can_never_be_sent() {
+    let clock = TestClock::new(1_000_000_000_000);
+    let mut f = fixture(
+        json!({ "planRetentionDays": 2 }),
+        whatsapp(FakeAdapter::accepting()),
+    );
+    f.service = f.service.with_clock(clock.clock());
+    let dir = files();
+    let path = write(dir.path(), "a.txt", b"hello");
+    let old = f
+        .service
+        .prepare(&with_file("sweep_old_01", &path, ""))
+        .unwrap();
+    let state = f.config.state_dir.clone();
+    std::fs::write(
+        attachment_dir(&state).join("msg_00000000000000000000000000000000"),
+        b"x",
+    )
+    .unwrap();
+    std::fs::write(attachment_dir(&state).join(".leftover.tmp"), b"x").unwrap();
+
+    // Still sendable: its copy stays; the orphan and the leftover go.
+    assert_eq!(
+        f.service.sweep().unwrap(),
+        Swept {
+            plans: 0,
+            copies: 2
+        }
+    );
+    assert!(copy_path(&state, &old.id).exists());
+
+    // Expired after 10 minutes: its copy goes, the plan stays until the retention.
+    clock.set(1_000_000_000_000 + 11 * 60_000);
+    let fresh = f
+        .service
+        .prepare(&with_file("sweep_new_01", &path, ""))
+        .unwrap();
+    assert!(!copy_path(&state, &old.id).exists());
+    assert!(copy_path(&state, &fresh.id).exists());
+    assert!(f.service.status(&old.id).is_ok());
+
+    // After the retention, the old plan and its text are deleted.
+    clock.set(1_000_000_000_000 + 2 * 86_400_000 + 1);
+    assert_eq!(f.service.sweep().unwrap().plans, 1);
+    assert!(f.service.status(&fresh.id).is_ok());
+    assert_eq!(
+        f.service.status(&old.id).unwrap_err().code,
+        "PLAN_NOT_FOUND"
+    );
 }

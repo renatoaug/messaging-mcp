@@ -1,6 +1,6 @@
 # Storage
 
-Updated: 2026-11-05
+Updated: 2026-11-06
 
 > One SQLite file, `plans.sqlite`, in `stateDir`, shared by every process on the machine. It holds the plans and the recipients added with `allow`. Record: [ADR-002](../decisions/ADR-002-plans-sent-at-most-once.md).
 
@@ -12,6 +12,8 @@ Updated: 2026-11-05
 - `journal_mode=WAL` and `synchronous=FULL`: a committed `sending` survives a crash or a power cut.
 - `stateDir` must be a directory you own with mode 0700, not a symlink; `plans.sqlite` a regular file with mode 0600, opened without following symlinks. Anything else is `STATE_PERMISSIONS`.
 - SQLite is compiled into the binary (`rusqlite` with `bundled`), version 3.54 today. The file must stay on a local disk.
+- Nothing is encrypted at rest beyond these file permissions.
+- Each `prepare` first sweeps: it deletes plans prepared more than `planRetentionDays` ago (30 by default, 1–3650), with their text, and every file copy whose plan is gone, attempted or expired. The sweep runs in the same write transaction as a prepare, so it never removes a copy another process is still preparing.
 
 ## The config folder
 
@@ -41,7 +43,7 @@ One row per idempotency key.
 
 ## `files/`
 
-Next to `plans.sqlite`, `files/` (0700) holds the reviewed copy of each plan's file, named by the plan ID (0600). It is read back only if its SHA-256 still matches, and removed after the single attempt. Copies of plans that expire unsent stay until removed by hand.
+Next to `plans.sqlite`, `files/` (0700) holds the reviewed copy of each plan's file, named by the plan ID (0600). It is read back only if its SHA-256 still matches, and removed after the single attempt; the sweep removes the copy of a plan that expired unsent.
 
 ## `recipient`
 
@@ -52,8 +54,3 @@ One row per recipient added with `allow`. Recipients in the config file are not 
 | `id`, `label`, `channel` | As in the config |
 | `target` | A WhatsApp JID, or a Telegram peer as JSON (`{"kind":"user","id":"42","accessHash":"-7"}`) |
 | `created_at` | When it was allowed |
-
-## Still open
-
-- [ ] Retention: plans, with their text, are never deleted.
-- [ ] Encryption at rest: none beyond file permissions.

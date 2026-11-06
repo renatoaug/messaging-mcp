@@ -22,5 +22,5 @@ The owner wants the agent to send files, up to 50 MB, any kind, with an optional
 
 - What the owner reviews (name, size, SHA-256, path) is exactly what leaves.
 - With `agent` approval, a confused or manipulated agent can still send any non-hidden file the owner can read to an allowed recipient. The allowlist and the review in the chat are the protection.
-- Copies of plans that expire unsent stay in `stateDir/files/` until removed by hand.
+- Copies of plans that expire unsent stay in `stateDir/files/` until the next prepare sweeps them.
 - A failed upload sends nothing (`TELEGRAM_UPLOAD_FAILED`, or HTTP 422 from the bridge); only an error after the message request is uncertain.

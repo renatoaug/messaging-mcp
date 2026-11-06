@@ -183,6 +183,10 @@ pub enum Approval {
     Agent,
 }
 
+fn default_plan_retention() -> i64 {
+    30
+}
+
 fn default_max_sends() -> i64 {
     6
 }
@@ -232,6 +236,9 @@ pub struct Config {
     pub plan_ttl_seconds: i64,
     #[serde(default = "default_max_sends")]
     pub max_sends_per_minute: i64,
+    /// Days a plan, with its text, is kept after it was prepared.
+    #[serde(default = "default_plan_retention")]
+    pub plan_retention_days: i64,
     /// Who approves a live message when the client has no approval dialog.
     #[serde(default)]
     pub approval: Approval,
@@ -371,6 +378,7 @@ pub fn parse_config(input: &str, base_dir: &Path) -> Result<Config, Error> {
     })?;
     check_range(config.plan_ttl_seconds, 30, 86_400, "planTtlSeconds")?;
     check_range(config.max_sends_per_minute, 1, 60, "maxSendsPerMinute")?;
+    check_range(config.plan_retention_days, 1, 3650, "planRetentionDays")?;
     check_recipients(&config.recipients)?;
     config.state_dir = absolute(&config.state_dir, base_dir);
     config.base_dir = base_dir.to_path_buf();

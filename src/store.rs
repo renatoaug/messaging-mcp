@@ -279,6 +279,13 @@ impl Transaction<'_> {
         Ok(())
     }
 
+    /// Deletes the plans prepared before `timestamp`. Returns how many.
+    pub fn delete_plans_before(&self, timestamp: i64) -> Result<usize, Error> {
+        self.connection
+            .execute("DELETE FROM plan WHERE created_at < ?", params![timestamp])
+            .map_err(sql_error)
+    }
+
     pub fn attempts_since(&self, timestamp: i64) -> Result<i64, Error> {
         self.connection
             .query_row(
