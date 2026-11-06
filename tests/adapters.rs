@@ -7,10 +7,12 @@ use std::time::Duration;
 use async_trait::async_trait;
 use grammers_tl_types::{self as tl, Serializable};
 use messaging_mcp::adapters::telegram::{
-    TelegramAdapter, TelegramTransport, TransportError, TransportFactory, clean_name, input_peer,
-    receipt_from, send_request, telegram_random_id,
+    BIG_FILE_BYTES, TelegramAdapter, TelegramTransport, TransportError, TransportFactory,
+    UPLOAD_PART_BYTES, UploadPart, clean_name, input_media, input_peer, receipt_from,
+    send_media_request, send_request, telegram_random_id, upload_parts, uploaded_file,
 };
 use messaging_mcp::adapters::whatsapp::WhatsAppAdapter;
+use messaging_mcp::attachment::{Kind, Outgoing, OutgoingFile};
 use messaging_mcp::config::{Recipient, TelegramPeer, WhatsAppConfig};
 use messaging_mcp::error::{Error, Outcome};
 use messaging_mcp::plan::{ChannelAdapter, Contact, Receipt};
@@ -83,7 +85,7 @@ fn adapter(base_url: String, token: Result<String, Error>) -> WhatsAppAdapter {
 async fn whatsapp_matches_the_bridge_contract_once() {
     let (url, requests) = bridge(Some(http("200 OK", r#"{"success":true,"id":"3EB0ABC"}"#))).await;
     let receipt = adapter(url, Ok(TOKEN.to_string()))
-        .send(&wa_recipient(), "hi", "plan")
+        .send(&wa_recipient(), &text("hi"), "plan")
         .await;
     assert_eq!(
         receipt.unwrap(),
@@ -115,7 +117,7 @@ async fn whatsapp_timeouts_errors_and_odd_bodies_are_uncertain() {
     ] {
         let (url, requests) = bridge(response).await;
         let error = adapter(url, Ok(TOKEN.to_string()))
-            .send(&wa_recipient(), "hi", "plan")
+            .send(&wa_recipient(), &text("hi"), "plan")
             .await
             .unwrap_err();
         assert_eq!(error.outcome, Outcome::Unknown);
@@ -128,7 +130,7 @@ async fn whatsapp_timeouts_errors_and_odd_bodies_are_uncertain() {
 async fn whatsapp_auth_rejection_is_not_sent_and_a_missing_token_sends_nothing() {
     let (url, _) = bridge(Some(http("401 Unauthorized", "Unauthorized"))).await;
     let error = adapter(url, Ok(TOKEN.to_string()))
-        .send(&wa_recipient(), "hi", "plan")
+        .send(&wa_recipient(), &text("hi"), "plan")
         .await
         .unwrap_err();
     assert_eq!(
@@ -138,7 +140,7 @@ async fn whatsapp_auth_rejection_is_not_sent_and_a_missing_token_sends_nothing()
     // 409: the bridge was not connected and attempted nothing.
     let (url, _) = bridge(Some(http("409 Conflict", r#"{"success":false}"#))).await;
     let error = adapter(url, Ok(TOKEN.to_string()))
-        .send(&wa_recipient(), "hi", "plan")
+        .send(&wa_recipient(), &text("hi"), "plan")
         .await
         .unwrap_err();
     assert_eq!(error.outcome, Outcome::NotSent);
@@ -146,15 +148,19 @@ async fn whatsapp_auth_rejection_is_not_sent_and_a_missing_token_sends_nothing()
     let (url, requests) = bridge(Some(http("200 OK", r#"{"success":true}"#))).await;
     let missing = Err(Error::new("SECRET_UNAVAILABLE", "secret"));
     let error = adapter(url.clone(), missing)
-        .send(&wa_recipient(), "hi", "plan")
+        .send(&wa_recipient(), &text("hi"), "plan")
         .await
         .unwrap_err();
     assert_eq!(error.outcome, Outcome::NotSent);
     let short = adapter(url, Ok("short".to_string()))
-        .send(&wa_recipient(), "hi", "plan")
+        .send(&wa_recipient(), &text("hi"), "plan")
         .await;
     assert_eq!(short.unwrap_err().outcome, Outcome::NotSent);
     assert!(requests.lock().unwrap().is_empty());
+}
+
+fn text(text: &str) -> Outgoing<'_> {
+    Outgoing { text, file: None }
 }
 
 #[derive(Default)]
@@ -174,13 +180,24 @@ impl TelegramTransport for FakeTransport {
         self.events.0.lock().unwrap().push("authorized");
         self.authorized.map_err(|()| TransportError::Failed)
     }
+    async fn upload(
+        &self,
+        _: &str,
+        _: &[u8],
+        _: i64,
+    ) -> Result<tl::enums::InputFile, TransportError> {
+        self.events.0.lock().unwrap().push("upload");
+        Err(TransportError::Failed)
+    }
     async fn send(
         &self,
         target: &TelegramPeer,
         text: &str,
+        media: Option<tl::enums::InputMedia>,
         random_id: i64,
     ) -> Result<Receipt, TransportError> {
         self.events.0.lock().unwrap().push("send");
+        assert!(media.is_none());
         self.sends.fetch_add(1, Ordering::SeqCst);
         assert_eq!(target, &TelegramPeer::Myself);
         assert_eq!(text, "**literal text**");
@@ -243,7 +260,7 @@ const READY: Setup = Setup {
 async fn telegram_uses_the_existing_session_explicit_peer_and_stable_random_id() {
     let (adapter, events, _) = telegram(READY, 1000);
     let receipt = adapter
-        .send(&tg_self(), "**literal text**", "plan")
+        .send(&tg_self(), &text("**literal text**"), "plan")
         .await
         .unwrap();
     assert_eq!(receipt.provider_message_id.as_deref(), Some("23"));
@@ -262,7 +279,10 @@ async fn telegram_refuses_an_unauthorized_session_without_sending_and_closes() {
         },
         1000,
     );
-    let error = adapter.send(&tg_self(), "hi", "plan").await.unwrap_err();
+    let error = adapter
+        .send(&tg_self(), &text("hi"), "plan")
+        .await
+        .unwrap_err();
     assert_eq!(
         (error.code, error.outcome),
         ("TELEGRAM_NOT_AUTHORIZED", Outcome::NotSent)
@@ -277,7 +297,10 @@ async fn telegram_refuses_an_unauthorized_session_without_sending_and_closes() {
         },
         1000,
     );
-    let error = adapter.send(&tg_self(), "hi", "plan").await.unwrap_err();
+    let error = adapter
+        .send(&tg_self(), &text("hi"), "plan")
+        .await
+        .unwrap_err();
     assert_eq!(
         (error.code, error.outcome),
         ("TELEGRAM_UNAVAILABLE", Outcome::NotSent)
@@ -295,7 +318,7 @@ async fn telegram_times_out_a_send_once_reports_uncertain_and_closes() {
         20,
     );
     let error = adapter
-        .send(&tg_self(), "**literal text**", "plan")
+        .send(&tg_self(), &text("**literal text**"), "plan")
         .await
         .unwrap_err();
     assert_eq!(error.outcome, Outcome::Unknown);
@@ -314,7 +337,7 @@ async fn a_telegram_close_failure_cannot_replace_an_accepted_message() {
     );
     assert!(
         adapter
-            .send(&tg_self(), "**literal text**", "plan")
+            .send(&tg_self(), &text("**literal text**"), "plan")
             .await
             .unwrap()
             .accepted
@@ -382,11 +405,129 @@ async fn a_bridge_that_is_not_running_means_nothing_was_sent() {
         format!("http://127.0.0.1:{port}/api"),
         Ok(TOKEN.to_string()),
     )
-    .send(&wa_recipient(), "hi", "plan")
+    .send(&wa_recipient(), &text("hi"), "plan")
     .await
     .unwrap_err();
     assert_eq!(
         (error.code, error.outcome),
         ("WHATSAPP_BRIDGE_DOWN", Outcome::NotSent)
     );
+}
+
+fn with_file<'a>(caption: &'a str, kind: Kind, data: &'a [u8]) -> Outgoing<'a> {
+    Outgoing {
+        text: caption,
+        file: Some(OutgoingFile {
+            name: "report.pdf",
+            mime: "application/pdf",
+            kind,
+            data,
+        }),
+    }
+}
+
+#[tokio::test]
+async fn whatsapp_sends_a_file_in_base64_with_its_kind() {
+    let (url, requests) = bridge(Some(http("200 OK", r#"{"success":true,"id":"3EB0F"}"#))).await;
+    let receipt = adapter(url, Ok(TOKEN.to_string()))
+        .send(
+            &wa_recipient(),
+            &with_file("see", Kind::Document, b"%PDF"),
+            "plan",
+        )
+        .await
+        .unwrap();
+    assert_eq!(receipt.provider_message_id.as_deref(), Some("3EB0F"));
+    let requests = requests.lock().unwrap();
+    let body = requests[0].split("\r\n\r\n").nth(1).unwrap();
+    let body: serde_json::Value = serde_json::from_str(body).unwrap();
+    assert_eq!(body["message"], "see");
+    assert_eq!(body["file"]["name"], "report.pdf");
+    assert_eq!(body["file"]["mime"], "application/pdf");
+    assert_eq!(body["file"]["kind"], "document");
+    assert_eq!(body["file"]["data"], "JVBERg==");
+}
+
+#[tokio::test]
+async fn whatsapp_a_failed_upload_is_not_sent() {
+    let (url, _) = bridge(Some(http(
+        "422 Unprocessable Entity",
+        r#"{"success":false}"#,
+    )))
+    .await;
+    let error = adapter(url, Ok(TOKEN.to_string()))
+        .send(&wa_recipient(), &with_file("", Kind::Image, b"x"), "plan")
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "WHATSAPP_REJECTED");
+    assert_eq!(error.outcome, Outcome::NotSent);
+}
+
+#[tokio::test]
+async fn telegram_a_failed_upload_sends_nothing() {
+    let (adapter, events, sends) = telegram(READY, 1000);
+    let error = adapter
+        .send(&tg_self(), &with_file("", Kind::Document, b"%PDF"), "plan")
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "TELEGRAM_UPLOAD_FAILED");
+    assert_eq!(error.outcome, Outcome::NotSent);
+    assert_eq!(sends.load(Ordering::SeqCst), 0);
+    assert_eq!(*events.0.lock().unwrap(), ["authorized", "upload", "close"]);
+}
+
+#[test]
+fn telegram_uploads_in_parts_and_switches_to_big_files_above_10_mb() {
+    let small = vec![1u8; UPLOAD_PART_BYTES + 1];
+    let parts = upload_parts(7, &small);
+    assert_eq!(parts.len(), 2);
+    assert!(
+        parts
+            .iter()
+            .all(|part| matches!(part, UploadPart::Small(p) if p.file_id == 7))
+    );
+    let tl::enums::InputFile::File(file) = uploaded_file(7, "a.bin", small.len()) else {
+        panic!("a small file is an InputFile");
+    };
+    assert_eq!((file.parts, file.name.as_str()), (2, "a.bin"));
+
+    let big = vec![1u8; BIG_FILE_BYTES + 1];
+    let parts = upload_parts(8, &big);
+    assert_eq!(parts.len(), 21);
+    let UploadPart::Big(last) = &parts[20] else {
+        panic!("a big file uses saveBigFilePart");
+    };
+    assert_eq!(
+        (last.file_part, last.file_total_parts, last.bytes.len()),
+        (20, 21, 1)
+    );
+    assert!(
+        matches!(uploaded_file(8, "b.bin", big.len()), tl::enums::InputFile::Big(f) if f.parts == 21)
+    );
+}
+
+#[test]
+fn telegram_a_document_keeps_its_name_and_is_never_turned_into_media() {
+    let message = with_file("caption", Kind::Document, b"%PDF");
+    let file = message.file.as_ref().unwrap();
+    let media = input_media(file, uploaded_file(1, "report.pdf", 4));
+    let tl::enums::InputMedia::UploadedDocument(document) = &media else {
+        panic!("a document");
+    };
+    assert!(document.force_file);
+    assert_eq!(document.mime_type, "application/pdf");
+    assert!(matches!(
+        &document.attributes[..],
+        [tl::enums::DocumentAttribute::Filename(name)] if name.file_name == "report.pdf"
+    ));
+    let request = send_media_request(tl::enums::InputPeer::PeerSelf, "**caption**", media, 9);
+    assert_eq!(request.message, "**caption**");
+    assert!(request.entities.is_none());
+    assert!(request.allow_paid_stars.is_none());
+    assert!(!request.allow_paid_floodskip);
+    assert_eq!(request.random_id, 9);
+
+    let photo = with_file("", Kind::Image, b"x");
+    let media = input_media(photo.file.as_ref().unwrap(), uploaded_file(1, "p.png", 1));
+    assert!(matches!(media, tl::enums::InputMedia::UploadedPhoto(_)));
 }

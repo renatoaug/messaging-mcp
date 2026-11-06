@@ -129,15 +129,19 @@ struct PrepareArgs {
     recipient: String,
     #[arg(long)]
     key: String,
-    /// The message. Prefer --text-file for private text: this stays in the shell history.
+    /// The message, or a file's caption. Prefer --text-file for private text: this stays in the
+    /// shell history.
     #[arg(
         long,
         conflicts_with = "text_file",
-        required_unless_present = "text_file"
+        required_unless_present_any = ["text_file", "file"]
     )]
     text: Option<String>,
     #[arg(long)]
     text_file: Option<PathBuf>,
+    /// A file to send, up to 50 MB, with the text as its caption.
+    #[arg(long)]
+    file: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -207,6 +211,11 @@ fn prepare(service: &MessagingService, args: PrepareArgs) -> Result<(), Error> {
     let input = PrepareInput {
         recipient_id: args.recipient,
         text,
+        file_path: args
+            .file
+            .map(|path| std::path::absolute(path).map(|path| path.to_string_lossy().into_owned()))
+            .transpose()
+            .map_err(|_| Error::new("FILE_UNREADABLE", "Cannot read the file path."))?,
         idempotency_key: args.key,
     };
     print_json(&service.prepare(&input)?)
@@ -225,6 +234,7 @@ fn approve(service: &MessagingService, id: &str) -> Result<(), Error> {
         "recipient": plan.recipient_label,
         "destination": plan.target,
         "message": plan.text,
+        "file": plan.attachment,
         "expiresAt": iso_utc(plan.expires_at),
     }))?;
     let answer = ask(&format!(

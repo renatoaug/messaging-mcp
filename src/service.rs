@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
+use crate::attachment::{self, Attachment, Outgoing, OutgoingFile};
 use crate::config::{Config, Recipient, TelegramPeer};
 use crate::error::{Error, Outcome};
 use crate::identity::{IdentifySender, identify_sender};
@@ -16,6 +17,8 @@ use crate::secrets::process_env;
 use crate::store::{PlanStore, Transaction};
 
 const MAX_TEXT_UTF16_UNITS: usize = 4096;
+/// Telegram's caption limit for an account without Premium.
+const MAX_CAPTION_UTF16_UNITS: usize = 1024;
 const MAX_SEARCH_RESULTS: i32 = 20;
 
 pub type Clock = Arc<dyn Fn() -> i64 + Send + Sync>;
@@ -33,8 +36,13 @@ pub fn sha256_hex(input: &[u8]) -> String {
 pub struct PrepareInput {
     /// An ID from `list_recipients`.
     pub recipient_id: String,
-    /// The exact plain text to send, 1-4096 characters.
+    /// The exact plain text to send, 1-4096 characters. With a file, its caption: 0-1024
+    /// characters.
     pub text: String,
+    /// The absolute path of one file to send, up to 50 MB. Files in hidden folders and
+    /// messaging-mcp's own files are refused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_path: Option<String>,
     /// 8-128 letters, digits, _ or -. Reuse it for the same intent, never to retry a failure.
     pub idempotency_key: String,
 }
@@ -63,16 +71,20 @@ fn is_idempotency_key(key: &str) -> bool {
 
 fn validate_prepare(input: &PrepareInput) -> Result<(), Error> {
     let recipient_is_valid = (1..=64).contains(&input.recipient_id.len());
-    let text_is_valid = !input.text.trim().is_empty()
-        && input.text.encode_utf16().count() <= MAX_TEXT_UTF16_UNITS
-        && !has_forbidden_control(&input.text);
+    let units = input.text.encode_utf16().count();
+    let length_is_valid = match input.file_path {
+        // A file may go without a caption.
+        Some(_) => units <= MAX_CAPTION_UTF16_UNITS,
+        None => !input.text.trim().is_empty() && units <= MAX_TEXT_UTF16_UNITS,
+    };
+    let text_is_valid = length_is_valid && !has_forbidden_control(&input.text);
     if recipient_is_valid && text_is_valid && is_idempotency_key(&input.idempotency_key) {
         return Ok(());
     }
     Err(Error::new(
         "INVALID_MESSAGE",
-        "Provide an allowed recipient ID, 1-4096 characters of plain text, and an 8-128 \
-         character idempotency key (letters, numbers, _ or -).",
+        "Provide an allowed recipient ID, 1-4096 characters of plain text (with a file, a \
+         caption of 0-1024), and an 8-128 character idempotency key (letters, numbers, _ or -).",
     ))
 }
 
@@ -180,13 +192,23 @@ impl MessagingService {
             .find(|recipient| recipient.id() == id)
     }
 
-    fn fingerprint(&self, recipient: &Recipient, text: &str, sender_fingerprint: &str) -> String {
-        let material = json!({
+    fn fingerprint(
+        &self,
+        recipient: &Recipient,
+        text: &str,
+        attachment: Option<&Attachment>,
+        sender_fingerprint: &str,
+    ) -> String {
+        let mut material = json!({
             "mode": self.config.mode,
             "recipient": recipient,
             "text": text,
             "sender": sender_fingerprint,
         });
+        // Added only with a file, so plans prepared before files existed keep their fingerprint.
+        if let Some(attachment) = attachment {
+            material["attachment"] = json!(attachment);
+        }
         sha256_hex(material.to_string().as_bytes())
     }
 
@@ -204,7 +226,17 @@ impl MessagingService {
             &sha256_hex(input.idempotency_key.as_bytes())[..32]
         );
         let sender = (self.identity)(recipient.channel())?;
-        let fingerprint = self.fingerprint(&recipient, &input.text, &sender.fingerprint);
+        let file = input
+            .file_path
+            .as_deref()
+            .map(|path| attachment::read_allowed(path, &self.config.protected_dirs()))
+            .transpose()?;
+        let fingerprint = self.fingerprint(
+            &recipient,
+            &input.text,
+            file.as_ref().map(|(attachment, _)| attachment),
+            &sender.fingerprint,
+        );
         self.store.transaction(|tx| {
             if let Some(existing) = tx.get(&id)? {
                 if existing.fingerprint != fingerprint {
@@ -216,6 +248,10 @@ impl MessagingService {
                 }
                 return Ok(existing);
             }
+            // Copied only for a new plan, so a conflicting key never touches another plan's copy.
+            if let Some((_, data)) = &file {
+                attachment::save_copy(&self.config.state_dir, &id, data)?;
+            }
             let created_at = (self.now)();
             let plan = Plan {
                 id: id.clone(),
@@ -226,6 +262,7 @@ impl MessagingService {
                 channel: recipient.channel(),
                 target: recipient.display_target(),
                 text: input.text.clone(),
+                attachment: file.as_ref().map(|(attachment, _)| attachment.clone()),
                 fingerprint: fingerprint.clone(),
                 created_at,
                 expires_at: created_at + self.config.plan_ttl_seconds * 1000,
@@ -259,7 +296,13 @@ impl MessagingService {
                 .ok_or_else(not_allowed)?,
         };
         let sender = (self.identity)(recipient.channel())?;
-        if plan.fingerprint != self.fingerprint(&recipient, &plan.text, &sender.fingerprint) {
+        let fingerprint = self.fingerprint(
+            &recipient,
+            &plan.text,
+            plan.attachment.as_ref(),
+            &sender.fingerprint,
+        );
+        if plan.fingerprint != fingerprint {
             return Err(Error::new(
                 "PLAN_CONTEXT_CHANGED",
                 "Sender credentials, account settings, or recipient changed after preparation. \
@@ -340,7 +383,36 @@ impl MessagingService {
             plan.status = Status::Failed;
             return;
         };
-        match adapter.send(recipient, &plan.text, &plan.id).await {
+        let data = match &plan.attachment {
+            Some(attachment) => {
+                match attachment::load_copy(&self.config.state_dir, &plan.id, &attachment.sha256) {
+                    Ok(data) => Some(data),
+                    Err(error) => {
+                        plan.status = Status::Failed;
+                        plan.error = Some(PlanError {
+                            code: error.code.to_string(),
+                            message: error.message,
+                        });
+                        return;
+                    }
+                }
+            }
+            None => None,
+        };
+        let message = Outgoing {
+            text: &plan.text,
+            file: plan
+                .attachment
+                .as_ref()
+                .zip(data.as_deref())
+                .map(|(attachment, data)| OutgoingFile {
+                    name: &attachment.name,
+                    mime: &attachment.mime,
+                    kind: attachment.kind,
+                    data,
+                }),
+        };
+        match adapter.send(recipient, &message, &plan.id).await {
             Ok(receipt) => {
                 plan.receipt = Some(receipt);
                 plan.status = Status::Sent;
@@ -368,6 +440,10 @@ impl MessagingService {
             Claim::Claimed(plan, recipient) => (plan, recipient),
         };
         self.attempt(&mut plan, &recipient).await;
+        if plan.attachment.is_some() {
+            // Attempted once, so never sendable again: the copy has done its job.
+            attachment::remove_copy(&self.config.state_dir, &plan.id);
+        }
         plan.completed_at = Some((self.now)());
         // The attempt happened. Never imply a safe retry because its receipt could not be saved.
         self.store.transaction(|tx| tx.update(&plan)).map_err(|_| {

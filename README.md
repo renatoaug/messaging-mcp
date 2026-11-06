@@ -59,6 +59,7 @@ messaging-mcp approval client-prompt
 |---|---|
 | "Set up messaging-mcp" | Creates the Telegram app, shows the QR codes, starts and pairs WhatsApp |
 | "Send Maria: I'll be 10 minutes late" | Finds Maria, allows her, prepares the message, shows it, and sends after your yes |
+| "Send Maria the PDF in my Downloads" | Prepares the message with the file, shows its name, size and path, and sends after your yes |
 | "Switch to dry-run" | Stops reaching any account |
 
 The tools: `setup_status`, `telegram_set_credentials`, `telegram_login`, `whatsapp_setup`, `whatsapp_status`, `whatsapp_stop`, `set_mode`, `search_contacts`, `allow_recipient`, `revoke_recipient`, `list_recipients`, `prepare_message`, `send_message`, `get_message_status`, `get_status`. There is no tool that approves a message.

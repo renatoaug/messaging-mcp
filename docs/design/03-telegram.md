@@ -30,10 +30,11 @@ IDs are positive decimal numbers, without the Bot API's `-100` prefix. The acces
 
 1. Read the credentials and session; any problem is `TELEGRAM_UNAVAILABLE`, not sent.
 2. Ask Telegram whether the session is authorized, then who it belongs to. Not authorized is `TELEGRAM_NOT_AUTHORIZED`; a bot or another user is `TELEGRAM_ACCOUNT_MISMATCH`. Both are "not sent".
-3. Call `messages.sendMessage` once: the plan's text exactly, no entities (so `**this**` stays literal), no link preview, no paid stars, no paid flood skip, and a `random_id` derived from the plan ID.
-4. Close the connection. A close error never replaces the result.
+3. With a file, upload it in 512 KB parts (`upload.saveFilePart`, or `upload.saveBigFilePart` above 10 MB), within 5 minutes. A failed or slow upload is `TELEGRAM_UPLOAD_FAILED`, not sent: no message exists yet.
+4. Call `messages.sendMessage` once: the plan's text exactly, no entities (so `**this**` stays literal), no link preview, no paid stars, no paid flood skip, and a `random_id` derived from the plan ID. With a file, `messages.sendMedia` instead, with the same rules for the caption: a photo, or a document that keeps its file name and is never turned into a video, voice note or sticker.
+5. Close the connection. A close error never replaces the result.
 
-From step 3 on, any error or a timeout is `TELEGRAM_OUTCOME_UNKNOWN`. That includes errors Telegram might have meant as "rejected": we do not tell them apart yet, so we assume the worst. The sender pool has `NoRetries`, and a flood wait is never slept through.
+From step 4 on, any error or a timeout is `TELEGRAM_OUTCOME_UNKNOWN`. That includes errors Telegram might have meant as "rejected": we do not tell them apart yet, so we assume the worst. The sender pool has `NoRetries`, and a flood wait is never slept through.
 
 The receipt's message ID comes only from the update that carries our `random_id`, never from another update in the same answer.
 

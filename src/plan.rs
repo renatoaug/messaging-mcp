@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+use crate::attachment::{Attachment, Outgoing};
 use crate::config::{Recipient, TelegramPeer};
 use crate::error::{DeliveryError, Error};
 
@@ -125,6 +126,8 @@ pub struct Plan {
     pub channel: Channel,
     pub target: String,
     pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attachment: Option<Attachment>,
     pub fingerprint: String,
     pub created_at: i64,
     pub expires_at: i64,
@@ -165,7 +168,7 @@ pub trait ChannelAdapter: Send + Sync {
     async fn send(
         &self,
         recipient: &Recipient,
-        text: &str,
+        message: &Outgoing<'_>,
         plan_id: &str,
     ) -> Result<Receipt, DeliveryError>;
 }

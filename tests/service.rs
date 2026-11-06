@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use common::*;
+use messaging_mcp::attachment::Outgoing;
 use messaging_mcp::config::{Recipient, TelegramPeer};
 use messaging_mcp::error::{DeliveryError, Outcome};
 use messaging_mcp::identity::SenderIdentity;
@@ -103,7 +104,12 @@ struct GatedAdapter {
 
 #[async_trait]
 impl ChannelAdapter for GatedAdapter {
-    async fn send(&self, _: &Recipient, _: &str, _: &str) -> Result<Receipt, DeliveryError> {
+    async fn send(
+        &self,
+        _: &Recipient,
+        _: &Outgoing<'_>,
+        _: &str,
+    ) -> Result<Receipt, DeliveryError> {
         self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if let Some(started) = self.started.lock().await.take() {
             let _ = started.send(());
@@ -319,7 +325,12 @@ struct LockingAdapter {
 
 #[async_trait]
 impl ChannelAdapter for LockingAdapter {
-    async fn send(&self, _: &Recipient, _: &str, _: &str) -> Result<Receipt, DeliveryError> {
+    async fn send(
+        &self,
+        _: &Recipient,
+        _: &Outgoing<'_>,
+        _: &str,
+    ) -> Result<Receipt, DeliveryError> {
         let connection = rusqlite::Connection::open(self.state_dir.join("plans.sqlite")).unwrap();
         connection.execute_batch("BEGIN EXCLUSIVE").unwrap();
         *self.lock.lock().unwrap() = Some(connection);

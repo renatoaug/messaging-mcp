@@ -5,6 +5,9 @@ use async_trait::async_trait;
 use reqwest::{Client, Response, StatusCode, header, redirect};
 use serde_json::{Value, json};
 
+use base64::Engine;
+
+use crate::attachment::{Kind, Outgoing};
 use crate::config::{Recipient, WhatsAppConfig, validate_bridge_url};
 use crate::error::{DeliveryError, Error, Outcome};
 use crate::identity::WHATSAPP_TOKEN_ENV;
@@ -13,16 +16,20 @@ use crate::secrets::{process_env, secret_from};
 
 const MAX_RESPONSE_BYTES: usize = 16_384;
 const MIN_TOKEN_CHARS: usize = 16;
+/// Uploading 50 MB and sending it; the bridge allows the same.
+const FILE_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Only these statuses mean the bridge attempted nothing: a bad request, a wrong token, a missing
-/// route, or 409 when the bridge is not connected (`whatsapp-bridge/server.go`).
-const REJECTED: [StatusCode; 6] = [
+/// route, 409 when the bridge is not connected, or 422 when a file upload failed before any
+/// message existed (`whatsapp-bridge/server.go`).
+const REJECTED: [StatusCode; 7] = [
     StatusCode::BAD_REQUEST,
     StatusCode::UNAUTHORIZED,
     StatusCode::FORBIDDEN,
     StatusCode::NOT_FOUND,
     StatusCode::METHOD_NOT_ALLOWED,
     StatusCode::CONFLICT,
+    StatusCode::UNPROCESSABLE_ENTITY,
 ];
 
 pub type ReadToken = Arc<dyn Fn() -> Result<String, Error> + Send + Sync>;
@@ -111,7 +118,7 @@ impl ChannelAdapter for WhatsAppAdapter {
     async fn send(
         &self,
         recipient: &Recipient,
-        text: &str,
+        message: &Outgoing<'_>,
         _plan_id: &str,
     ) -> Result<Receipt, DeliveryError> {
         let Recipient::Whatsapp { target, .. } = recipient else {
@@ -122,12 +129,24 @@ impl ChannelAdapter for WhatsAppAdapter {
             ));
         };
         let token = self.token()?;
-        let response = self
-            .client
-            .post(&self.send_url)
+        let mut body = json!({ "recipient": target, "message": message.text });
+        let mut request = self.client.post(&self.send_url);
+        if let Some(file) = &message.file {
+            body["file"] = json!({
+                "name": file.name,
+                "mime": file.mime,
+                "kind": match file.kind {
+                    Kind::Image => "image",
+                    Kind::Document => "document",
+                },
+                "data": base64::engine::general_purpose::STANDARD.encode(file.data),
+            });
+            request = request.timeout(FILE_TIMEOUT);
+        }
+        let response = request
             .header(header::CONTENT_TYPE, "application/json")
             .header(header::AUTHORIZATION, format!("Bearer {token}"))
-            .body(json!({ "recipient": target, "message": text }).to_string())
+            .body(body.to_string())
             .send()
             .await
             .map_err(|error| {

@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use tokio::time::timeout;
 
 use crate::adapters::telegram_client;
+use crate::attachment::{Kind, Outgoing, OutgoingFile};
 use crate::config::{Recipient, TelegramConfig, TelegramPeer};
 use crate::error::{DeliveryError, Error, Outcome};
 use crate::identity::{TELEGRAM_API_HASH_ENV, TELEGRAM_API_ID_ENV};
@@ -20,6 +21,14 @@ use crate::secrets::{Env, secret_from};
 use crate::service::sha256_hex;
 
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(3);
+/// Uploading 50 MB, part by part. A timeout here still means nothing was sent.
+const UPLOAD_TIMEOUT: Duration = Duration::from_secs(300);
+/// Sending media after the upload; Telegram processes a photo before it answers.
+const MEDIA_SEND_TIMEOUT: Duration = Duration::from_secs(60);
+/// Telegram's part size for uploads (it accepts up to 512 KB per part).
+pub const UPLOAD_PART_BYTES: usize = 512 * 1024;
+/// Files above this go through the big file upload.
+pub const BIG_FILE_BYTES: usize = 10 * 1024 * 1024;
 
 /// A failure inside the transport. It carries no text, so a provider error can never leak.
 #[derive(Debug)]
@@ -31,10 +40,18 @@ pub enum TransportError {
 #[async_trait]
 pub trait TelegramTransport: Send + Sync {
     async fn authorized(&self) -> Result<bool, TransportError>;
+    /// Uploads a file's parts. No message exists yet, so any failure means nothing was sent.
+    async fn upload(
+        &self,
+        name: &str,
+        data: &[u8],
+        file_id: i64,
+    ) -> Result<tl::enums::InputFile, TransportError>;
     async fn send(
         &self,
         target: &TelegramPeer,
         text: &str,
+        media: Option<tl::enums::InputMedia>,
         random_id: i64,
     ) -> Result<Receipt, TransportError>;
     async fn search(&self, query: &str, limit: i32) -> Result<Vec<Contact>, TransportError>;
@@ -69,6 +86,14 @@ fn uncertain() -> DeliveryError {
         "TELEGRAM_OUTCOME_UNKNOWN",
         "Telegram did not confirm the result. Verify the chat; no automatic retry was made.",
         Outcome::Unknown,
+    )
+}
+
+fn upload_failed() -> DeliveryError {
+    DeliveryError::new(
+        "TELEGRAM_UPLOAD_FAILED",
+        "The file could not be uploaded to Telegram. No message was sent.",
+        Outcome::NotSent,
     )
 }
 
@@ -135,7 +160,7 @@ impl ChannelAdapter for TelegramAdapter {
     async fn send(
         &self,
         recipient: &Recipient,
-        text: &str,
+        message: &Outgoing<'_>,
         plan_id: &str,
     ) -> Result<Receipt, DeliveryError> {
         let Recipient::Telegram { target, .. } = recipient else {
@@ -147,7 +172,31 @@ impl ChannelAdapter for TelegramAdapter {
         };
         let transport = self.open().await?;
         let random_id = telegram_random_id(plan_id);
-        let result = match timeout(self.timeout, transport.send(target, text, random_id)).await {
+        let mut limit = self.timeout;
+        let media = match &message.file {
+            Some(file) => {
+                let file_id = telegram_random_id(&format!("{plan_id}:file"));
+                let upload = transport.upload(file.name, file.data, file_id);
+                let uploaded = match timeout(UPLOAD_TIMEOUT, upload).await {
+                    Ok(Ok(uploaded)) => Ok(uploaded),
+                    Ok(Err(TransportError::Delivery(error))) => Err(error),
+                    Ok(Err(TransportError::Failed)) | Err(_) => Err(upload_failed()),
+                };
+                match uploaded {
+                    Ok(uploaded) => {
+                        limit = limit.max(MEDIA_SEND_TIMEOUT);
+                        Some(input_media(file, uploaded))
+                    }
+                    Err(error) => {
+                        close(transport.as_ref()).await;
+                        return Err(error);
+                    }
+                }
+            }
+            None => None,
+        };
+        let send = transport.send(target, message.text, media, random_id);
+        let result = match timeout(limit, send).await {
             Ok(Ok(receipt)) => Ok(receipt),
             Ok(Err(TransportError::Delivery(error))) => Err(error),
             Ok(Err(TransportError::Failed)) | Err(_) => Err(uncertain()),
@@ -294,6 +343,127 @@ pub fn send_request(
         allow_paid_stars: None,
         suggested_post: None,
         rich_message: None,
+    }
+}
+
+/// One upload request per part: `upload.saveFilePart`, or `upload.saveBigFilePart` above 10 MB.
+pub enum UploadPart {
+    Small(tl::functions::upload::SaveFilePart),
+    Big(tl::functions::upload::SaveBigFilePart),
+}
+
+pub fn upload_parts(file_id: i64, data: &[u8]) -> Vec<UploadPart> {
+    let total = data.len().div_ceil(UPLOAD_PART_BYTES);
+    let big = data.len() > BIG_FILE_BYTES;
+    data.chunks(UPLOAD_PART_BYTES)
+        .enumerate()
+        .map(|(part, bytes)| {
+            let file_part = i32::try_from(part).unwrap_or(i32::MAX);
+            if big {
+                UploadPart::Big(tl::functions::upload::SaveBigFilePart {
+                    file_id,
+                    file_part,
+                    file_total_parts: i32::try_from(total).unwrap_or(i32::MAX),
+                    bytes: bytes.to_vec(),
+                })
+            } else {
+                UploadPart::Small(tl::functions::upload::SaveFilePart {
+                    file_id,
+                    file_part,
+                    bytes: bytes.to_vec(),
+                })
+            }
+        })
+        .collect()
+}
+
+/// The uploaded file, as `messages.sendMedia` refers to it.
+pub fn uploaded_file(file_id: i64, name: &str, size: usize) -> tl::enums::InputFile {
+    let parts = i32::try_from(size.div_ceil(UPLOAD_PART_BYTES)).unwrap_or(i32::MAX);
+    if size > BIG_FILE_BYTES {
+        tl::types::InputFileBig {
+            id: file_id,
+            parts,
+            name: name.to_string(),
+        }
+        .into()
+    } else {
+        tl::types::InputFile {
+            id: file_id,
+            parts,
+            name: name.to_string(),
+            md5_checksum: String::new(),
+        }
+        .into()
+    }
+}
+
+/// A photo, or a document kept as a file (never turned into a video, a voice note or a sticker).
+pub fn input_media(
+    file: &OutgoingFile<'_>,
+    uploaded: tl::enums::InputFile,
+) -> tl::enums::InputMedia {
+    match file.kind {
+        Kind::Image => tl::types::InputMediaUploadedPhoto {
+            spoiler: false,
+            live_photo: false,
+            file: uploaded,
+            stickers: None,
+            ttl_seconds: None,
+            video: None,
+        }
+        .into(),
+        Kind::Document => tl::types::InputMediaUploadedDocument {
+            nosound_video: false,
+            force_file: true,
+            spoiler: false,
+            file: uploaded,
+            thumb: None,
+            mime_type: file.mime.to_string(),
+            attributes: vec![
+                tl::types::DocumentAttributeFilename {
+                    file_name: file.name.to_string(),
+                }
+                .into(),
+            ],
+            stickers: None,
+            video_cover: None,
+            video_timestamp: None,
+            ttl_seconds: None,
+        }
+        .into(),
+    }
+}
+
+/// The exact media request: the caption as literal text, and never any paid delivery.
+pub fn send_media_request(
+    peer: tl::enums::InputPeer,
+    caption: &str,
+    media: tl::enums::InputMedia,
+    random_id: i64,
+) -> tl::functions::messages::SendMedia {
+    tl::functions::messages::SendMedia {
+        silent: false,
+        background: false,
+        clear_draft: false,
+        noforwards: false,
+        update_stickersets_order: false,
+        invert_media: false,
+        allow_paid_floodskip: false,
+        peer,
+        reply_to: None,
+        media,
+        message: caption.to_string(),
+        random_id,
+        reply_markup: None,
+        entities: None,
+        schedule_date: None,
+        schedule_repeat_period: None,
+        send_as: None,
+        quick_reply_shortcut: None,
+        effect: None,
+        allow_paid_stars: None,
+        suggested_post: None,
     }
 }
 

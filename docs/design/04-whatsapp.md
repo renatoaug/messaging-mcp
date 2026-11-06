@@ -6,20 +6,23 @@ Updated: 2026-11-05
 
 ## The bridge
 
-The source is in `whatsapp-bridge/` (`main.go`, `server.go`, `server_test.go`). It keeps the device session in `store/session.db` and nothing else: no message history, no media, no webhooks. It never logs message contents. It listens only on `127.0.0.1`, and every route needs `Authorization: Bearer <token>`; the token is created on first start in `store/.bridge-token` (0600). The SQLite driver is pure Go, so it builds without a C compiler; releases ship it next to `messaging-mcp`.
+The source is in `whatsapp-bridge/` (`main.go`, `server.go`, `server_test.go`). It keeps the device session in `store/session.db` and nothing else: no message history, no stored media, no webhooks; a file is held in memory only while it is sent. It never logs message contents. It listens only on `127.0.0.1`, and every route needs `Authorization: Bearer <token>`; the token is created on first start in `store/.bridge-token` (0600). The SQLite driver is pure Go, so it builds without a C compiler; releases ship it next to `messaging-mcp`.
 
 ```text
 GET  /api/health → 200 {"connected": true, "paired": true, "jid": "5511999999999:12@s.whatsapp.net"}  (503 when not connected)
 GET  /api/qr     → 200 {"code": "2@…", "paired": false, "connected": false}
 POST /api/send   {"recipient": "<JID>", "message": "<text>"} → 200 {"success": true, "id": "3EB0…"}
+POST /api/send   {"recipient": "<JID>", "message": "<caption>", "file": {"name": "a.pdf", "mime": "application/pdf", "kind": "document", "data": "<base64>"}}
 ```
 
 | `/api/send` answer | Our result |
 |---|---|
 | 200 with `"success": true` | `sent`, with WhatsApp's message ID |
-| 400 (bad JSON, unknown field, not a phone or group JID, blank text), 401 (token), 409 (not connected) | `failed` (`WHATSAPP_REJECTED`): nothing was attempted |
+| 400 (bad JSON, unknown field, not a phone or group JID, blank text without a file, an invalid file), 401 (token), 409 (not connected), 422 (the file upload to WhatsApp failed, before any message) | `failed` (`WHATSAPP_REJECTED`): nothing was sent |
 | 502 (the send failed), any other status, a redirect, a timeout, an odd body | `outcome_unknown`: the message may have left |
 | No token, or a token under 16 characters | `failed` before any request |
+
+A file is `kind` `image` (sent as a photo) or `document` (keeps its name), at most 50 MB; text sends time out after 30 s, file sends after 5 minutes.
 
 The bridge exits with code 4 when a pairing times out unscanned, and 5 when the device is unlinked from the phone (it then forgets the session, so the next start pairs again).
 

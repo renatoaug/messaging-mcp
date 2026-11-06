@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -20,8 +21,15 @@ type fakeMessenger struct {
 
 func (f *fakeMessenger) Status() Status { return f.status }
 
-func (f *fakeMessenger) Send(_ context.Context, to types.JID, text string) (string, error) {
-	f.sent = append(f.sent, to.String()+"|"+text)
+func (f *fakeMessenger) Send(_ context.Context, to types.JID, text string, file *File) (string, error) {
+	sent := to.String() + "|" + text
+	if file != nil {
+		sent += "|" + file.Name + "|" + file.Mime + "|" + string(file.Data)
+		if file.Image {
+			sent += "|image"
+		}
+	}
+	f.sent = append(f.sent, sent)
 	if f.err != nil {
 		return "", f.err
 	}
@@ -123,5 +131,55 @@ func TestAFailedSendIsNeverReportedAsNotSent(t *testing.T) {
 	code, body := request(t, newHandler(m, token), "POST", "/api/send", "Bearer "+token, payload)
 	if code != http.StatusBadGateway || body["success"] != false || len(m.sent) != 1 {
 		t.Fatalf("got %d %v, sent %v", code, body, m.sent)
+	}
+}
+
+func filePayload(kind, name, data string, caption string) string {
+	payload, _ := json.Marshal(map[string]any{
+		"recipient": "5511988887777@s.whatsapp.net",
+		"message":   caption,
+		"file": map[string]string{
+			"name": name, "mime": "application/pdf", "kind": kind,
+			"data": base64.StdEncoding.EncodeToString([]byte(data)),
+		},
+	})
+	return string(payload)
+}
+
+func TestAFileGoesOutWithItsNameAndCaption(t *testing.T) {
+	for _, tc := range []struct{ kind, caption, want string }{
+		{"document", "", "5511988887777@s.whatsapp.net||report.pdf|application/pdf|%PDF"},
+		{"image", "look", "5511988887777@s.whatsapp.net|look|report.pdf|application/pdf|%PDF|image"},
+	} {
+		m := connected()
+		code, body := request(t, newHandler(m, token), "POST", "/api/send", "Bearer "+token, filePayload(tc.kind, "report.pdf", "%PDF", tc.caption))
+		if code != http.StatusOK || body["success"] != true || len(m.sent) != 1 || m.sent[0] != tc.want {
+			t.Fatalf("%s: got %d %v, sent %v", tc.kind, code, body, m.sent)
+		}
+	}
+}
+
+func TestInvalidFilesAreRefusedWithoutSending(t *testing.T) {
+	for _, body := range []string{
+		filePayload("video", "a.pdf", "x", ""),
+		filePayload("document", "../a.pdf", "x", ""),
+		filePayload("document", "", "x", ""),
+		filePayload("document", "a.pdf", "", ""),
+		strings.Replace(filePayload("document", "a.pdf", "x", ""), `"data":"eA=="`, `"data":"%%%"`, 1),
+	} {
+		m := connected()
+		code, _ := request(t, newHandler(m, token), "POST", "/api/send", "Bearer "+token, body)
+		if code != http.StatusBadRequest || len(m.sent) != 0 {
+			t.Fatalf("%s: got %d, sent %v", body, code, m.sent)
+		}
+	}
+}
+
+func TestAFailedUploadIsReportedAsNotSent(t *testing.T) {
+	m := connected()
+	m.err = errUploadFailed
+	code, _ := request(t, newHandler(m, token), "POST", "/api/send", "Bearer "+token, filePayload("document", "a.pdf", "x", ""))
+	if code != http.StatusUnprocessableEntity {
+		t.Fatalf("got %d", code)
 	}
 }

@@ -5,6 +5,7 @@
 
 pub mod adapters;
 pub mod app;
+pub mod attachment;
 pub mod cli;
 pub mod config;
 pub mod error;

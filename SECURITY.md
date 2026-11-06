@@ -29,6 +29,7 @@ Messaging MCP can send messages as you. Message content, web pages, contact name
 10. **The bridge comes back on its own.** When an MCP client starts and the bridge was paired before but is not running (after a restart, for example), the server starts it again; it reconnects without a QR code. A bridge that never finished pairing is not started unasked.
 11. **The rate limit is local** to a state directory. It does not replace the services' own rules. Do not use this for bulk messages, contact harvesting or to get around blocks.
 12. **Config edits made by hand need a reconnect** of each MCP process (`/mcp` in Claude Code). Changes made through the setup tools and recipients added with `allow` take effect immediately.
+13. **Files.** The agent can attach any file you can read, except hidden files, anything in a hidden folder (`~/.ssh`, `~/.config`, `.env`, `.git`) and messaging-mcp's own folders. Each file is copied when prepared and shown to you with its name, size, path and SHA-256 ([ADR-011](docs/decisions/ADR-011-files-are-copied-when-prepared.md)). Check the file before you say yes: with `agent` approval nothing else stands between an agent's mistake and the recipient.
 
 ## Secrets
 

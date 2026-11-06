@@ -53,3 +53,4 @@ What this makes easier, what it makes harder, what to watch. (bullets)
 | [ADR-008](ADR-008-own-whatsapp-bridge.md) | Our own WhatsApp bridge, on whatsmeow | Accepted |
 | [ADR-009](ADR-009-approval-is-the-mode-the-owner-chose.md) | A live message is approved by the one mode the owner chose | Accepted |
 | [ADR-010](ADR-010-the-agent-can-be-the-approval.md) | The owner can let the agent's chat confirmation be the approval | Accepted |
+| [ADR-011](ADR-011-files-are-copied-when-prepared.md) | A file is checked and copied when the message is prepared | Accepted |

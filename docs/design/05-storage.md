@@ -28,8 +28,9 @@ One row per idempotency key.
 | `recipient_id`, `recipient_label` | The recipient, as allowed when prepared |
 | `sender` | Who it sends as, for the approval screen (`Telegram user:777`) |
 | `channel`, `target` | `whatsapp` or `telegram`, and the destination as shown (`user:42`) |
-| `text` | The exact message, **in clear text** |
-| `fingerprint` | SHA-256 of mode, recipient, text and the sender's credentials |
+| `text` | The exact message, or a file's caption, **in clear text** |
+| `attachment` | The file, as JSON (`path`, `name`, `size`, `mime`, `kind`, `sha256`), or null. Added by migration 2 |
+| `fingerprint` | SHA-256 of mode, recipient, text, the file (when there is one) and the sender's credentials |
 | `status` | `pending`, `approved`, `sending`, `sent`, `simulated`, `failed` or `outcome_unknown` |
 | `created_at`, `expires_at` | When prepared, and when it stops being sendable |
 | `approved_at`, `attempted_at`, `completed_at` | Set by approve, by the claim, and by the result |
@@ -37,6 +38,10 @@ One row per idempotency key.
 | `error_code`, `error_message` | Our own code and message for `failed` or `outcome_unknown` |
 
 `attempted_at` is indexed: the rate limit counts the rows attempted in the last 60 s.
+
+## `files/`
+
+Next to `plans.sqlite`, `files/` (0700) holds the reviewed copy of each plan's file, named by the plan ID (0600). It is read back only if its SHA-256 still matches, and removed after the single attempt. Copies of plans that expire unsent stay until removed by hand.
 
 ## `recipient`
 

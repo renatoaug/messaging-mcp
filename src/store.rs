@@ -15,7 +15,8 @@ use crate::secrets::is_owner_only;
 const DEFAULT_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// One entry per schema version. `PRAGMA user_version` records how many have run.
-const MIGRATIONS: &[&str] = &["
+const MIGRATIONS: &[&str] = &[
+    "
     CREATE TABLE plan (
         id TEXT PRIMARY KEY,
         mode TEXT NOT NULL,
@@ -45,11 +46,15 @@ const MIGRATIONS: &[&str] = &["
         target TEXT NOT NULL,
         created_at INTEGER NOT NULL
     );
-"];
+",
+    "
+    ALTER TABLE plan ADD COLUMN attachment TEXT;
+",
+];
 
 const PLAN_COLUMNS: &str = "id, mode, recipient_id, recipient_label, sender, channel, target, \
     text, fingerprint, status, created_at, expires_at, approved_at, attempted_at, completed_at, \
-    receipt_accepted, receipt_provider_message_id, error_code, error_message";
+    receipt_accepted, receipt_provider_message_id, error_code, error_message, attachment";
 
 fn state_error() -> Error {
     Error::new(
@@ -215,7 +220,7 @@ impl Transaction<'_> {
             .execute(
                 &format!(
                     "INSERT INTO plan ({PLAN_COLUMNS}) VALUES \
-                     (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+                     (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
                 ),
                 params![
                     plan.id,
@@ -239,6 +244,11 @@ impl Transaction<'_> {
                         .and_then(|r| r.provider_message_id.as_deref()),
                     plan.error.as_ref().map(|e| e.code.as_str()),
                     plan.error.as_ref().map(|e| e.message.as_str()),
+                    plan.attachment
+                        .as_ref()
+                        .map(serde_json::to_string)
+                        .transpose()
+                        .map_err(|_| state_error())?,
                 ],
             )
             .map_err(sql_error)?;
@@ -313,6 +323,7 @@ impl Transaction<'_> {
 
 struct RawPlan {
     plan: Plan,
+    attachment: Option<String>,
     mode: String,
     channel: String,
     status: String,
@@ -323,6 +334,7 @@ fn raw_plan(row: &Row<'_>) -> rusqlite::Result<RawPlan> {
     let error_code: Option<String> = row.get("error_code")?;
     let error_message: Option<String> = row.get("error_message")?;
     Ok(RawPlan {
+        attachment: row.get("attachment")?,
         mode: row.get("mode")?,
         channel: row.get("channel")?,
         status: row.get("status")?,
@@ -335,6 +347,7 @@ fn raw_plan(row: &Row<'_>) -> rusqlite::Result<RawPlan> {
             channel: Channel::Whatsapp,
             target: row.get("target")?,
             text: row.get("text")?,
+            attachment: None,
             fingerprint: row.get("fingerprint")?,
             created_at: row.get("created_at")?,
             expires_at: row.get("expires_at")?,
@@ -378,10 +391,17 @@ fn select_plan(connection: &Connection, id: &str) -> Result<Option<Plan>, Error>
         ) else {
             return Err(state_error());
         };
+        let attachment = raw
+            .attachment
+            .as_deref()
+            .map(serde_json::from_str)
+            .transpose()
+            .map_err(|_| state_error())?;
         Ok(Plan {
             mode,
             channel,
             status,
+            attachment,
             ..raw.plan
         })
     })

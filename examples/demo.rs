@@ -21,6 +21,7 @@ async fn run() -> Result<(), Error> {
         let plan = service.prepare(&PrepareInput {
             recipient_id: recipient_id.to_string(),
             text: "One project, two channels. No real message was sent.".to_string(),
+            file_path: None,
             idempotency_key: format!("demo_{recipient_id}_001"),
         })?;
         let result = service.send(&plan.id).await?;

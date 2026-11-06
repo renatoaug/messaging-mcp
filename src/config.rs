@@ -239,6 +239,34 @@ pub struct Config {
     pub recipients: Vec<Recipient>,
     pub whatsapp: Option<WhatsAppConfig>,
     pub telegram: Option<TelegramConfig>,
+    /// The config file's folder, set when it is read.
+    #[serde(skip)]
+    pub base_dir: PathBuf,
+}
+
+impl Config {
+    /// messaging-mcp's own folders: the state, the config and every secret file's folder. No
+    /// file inside them is ever sent, so an agent cannot mail out a session or a token.
+    pub fn protected_dirs(&self) -> Vec<PathBuf> {
+        let mut dirs = vec![self.state_dir.clone()];
+        if !self.base_dir.as_os_str().is_empty() {
+            dirs.push(self.base_dir.clone());
+        }
+        let secrets = [
+            self.whatsapp.as_ref().and_then(|w| w.token_file.as_ref()),
+            self.telegram
+                .as_ref()
+                .and_then(|t| t.api_hash_file.as_ref()),
+            self.telegram.as_ref().and_then(|t| t.session_file.as_ref()),
+        ];
+        dirs.extend(
+            secrets
+                .into_iter()
+                .flatten()
+                .filter_map(|file| file.parent().map(Path::to_path_buf)),
+        );
+        dirs
+    }
 }
 
 /// Accepts only a literal loopback address, so a bridge token can never travel elsewhere.
@@ -345,6 +373,7 @@ pub fn parse_config(input: &str, base_dir: &Path) -> Result<Config, Error> {
     check_range(config.max_sends_per_minute, 1, 60, "maxSendsPerMinute")?;
     check_recipients(&config.recipients)?;
     config.state_dir = absolute(&config.state_dir, base_dir);
+    config.base_dir = base_dir.to_path_buf();
     if let Some(whatsapp) = &mut config.whatsapp {
         check_optional_label(whatsapp.account_label.as_ref())?;
         check_timeout(whatsapp.timeout_ms, "whatsapp.timeoutMs")?;

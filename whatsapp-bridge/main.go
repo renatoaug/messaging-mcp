@@ -1,8 +1,8 @@
 // Command messaging-mcp-whatsapp-bridge links one personal WhatsApp account as a WhatsApp Web
-// device and lets messaging-mcp send text through it, over HTTP on 127.0.0.1 only.
+// device and lets messaging-mcp send text and files through it, over HTTP on 127.0.0.1 only.
 //
-// It keeps the device session and nothing else: no message history, no media, no webhooks. It
-// never logs message contents. See docs/design/04-whatsapp.md.
+// It keeps the device session and nothing else: no message history, no stored media, no
+// webhooks. A file is held in memory only while it is sent. It never logs message contents. See docs/design/04-whatsapp.md.
 package main
 
 import (
@@ -63,12 +63,49 @@ func (w *whatsapp) Status() Status {
 	return s
 }
 
-func (w *whatsapp) Send(ctx context.Context, to types.JID, text string) (string, error) {
-	response, err := w.client.SendMessage(ctx, to, &waE2E.Message{Conversation: proto.String(text)})
+func (w *whatsapp) Send(ctx context.Context, to types.JID, text string, file *File) (string, error) {
+	message := &waE2E.Message{Conversation: proto.String(text)}
+	if file != nil {
+		var err error
+		if message, err = w.fileMessage(ctx, text, file); err != nil {
+			return "", err
+		}
+	}
+	response, err := w.client.SendMessage(ctx, to, message)
 	if err != nil {
 		return "", err
 	}
 	return response.ID, nil
+}
+
+// fileMessage uploads the file, encrypted, to WhatsApp's media servers and builds the message that
+// points at it. A failure here happens before any message exists.
+func (w *whatsapp) fileMessage(ctx context.Context, caption string, file *File) (*waE2E.Message, error) {
+	kind := whatsmeow.MediaDocument
+	if file.Image {
+		kind = whatsmeow.MediaImage
+	}
+	up, err := w.client.Upload(ctx, file.Data, kind)
+	if err != nil {
+		return nil, errUploadFailed
+	}
+	var text *string
+	if caption != "" {
+		text = proto.String(caption)
+	}
+	if file.Image {
+		return &waE2E.Message{ImageMessage: &waE2E.ImageMessage{
+			Caption: text, Mimetype: proto.String(file.Mime), URL: proto.String(up.URL),
+			DirectPath: proto.String(up.DirectPath), MediaKey: up.MediaKey,
+			FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
+		}}, nil
+	}
+	return &waE2E.Message{DocumentMessage: &waE2E.DocumentMessage{
+		Caption: text, Mimetype: proto.String(file.Mime), FileName: proto.String(file.Name),
+		Title: proto.String(file.Name), URL: proto.String(up.URL), DirectPath: proto.String(up.DirectPath),
+		MediaKey: up.MediaKey, FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256,
+		FileLength: proto.Uint64(up.FileLength),
+	}}, nil
 }
 
 // loadToken reads the bridge token, creating a random one (0600) on first start.

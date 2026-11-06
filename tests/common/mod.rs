@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use messaging_mcp::attachment::Outgoing;
 use messaging_mcp::config::{Config, Recipient, parse_config};
 use messaging_mcp::error::{DeliveryError, Error};
 use messaging_mcp::identity::SenderIdentity;
@@ -88,6 +89,7 @@ pub fn draft(key: &str) -> PrepareInput {
     PrepareInput {
         recipient_id: "wa-test".to_string(),
         text: "Olá, teste 👋".to_string(),
+        file_path: None,
         idempotency_key: key.to_string(),
     }
 }
@@ -99,6 +101,8 @@ pub type SendResult = Result<Receipt, DeliveryError>;
 /// An adapter that records every call and answers with whatever `respond` returns.
 pub struct FakeAdapter {
     pub calls: Mutex<Vec<(Recipient, String, String)>>,
+    /// The files sent: name and bytes.
+    pub files: Mutex<Vec<(String, Vec<u8>)>>,
     respond: Box<dyn Fn() -> SendResult + Send + Sync>,
 }
 
@@ -106,6 +110,7 @@ impl FakeAdapter {
     pub fn new(respond: impl Fn() -> SendResult + Send + Sync + 'static) -> Arc<Self> {
         Arc::new(Self {
             calls: Mutex::new(Vec::new()),
+            files: Mutex::new(Vec::new()),
             respond: Box::new(respond),
         })
     }
@@ -124,11 +129,23 @@ impl FakeAdapter {
 
 #[async_trait]
 impl ChannelAdapter for FakeAdapter {
-    async fn send(&self, recipient: &Recipient, text: &str, plan_id: &str) -> SendResult {
-        self.calls
-            .lock()
-            .unwrap()
-            .push((recipient.clone(), text.to_string(), plan_id.to_string()));
+    async fn send(
+        &self,
+        recipient: &Recipient,
+        message: &Outgoing<'_>,
+        plan_id: &str,
+    ) -> SendResult {
+        self.calls.lock().unwrap().push((
+            recipient.clone(),
+            message.text.to_string(),
+            plan_id.to_string(),
+        ));
+        if let Some(file) = &message.file {
+            self.files
+                .lock()
+                .unwrap()
+                .push((file.name.to_string(), file.data.to_vec()));
+        }
         (self.respond)()
     }
 }

@@ -35,6 +35,21 @@ fn read_private_file(path: &Path) -> Option<String> {
     (!secret.is_empty()).then(|| secret.to_string())
 }
 
+/// Reads a private regular file (0600, not a link) of any size, such as a reviewed file copy.
+pub fn read_private_bytes(path: &Path) -> std::io::Result<Vec<u8>> {
+    let mut file = OpenOptions::new()
+        .read(true)
+        .custom_flags(OFlags::NOFOLLOW.bits() as i32)
+        .open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || !is_owner_only(&metadata) {
+        return Err(std::io::Error::other("not a private file"));
+    }
+    let mut data = Vec::new();
+    file.read_to_end(&mut data)?;
+    Ok(data)
+}
+
 /// Reads a secret from a private regular file, without ever exposing its contents in an error.
 pub fn read_secret_file(path: &Path) -> Result<String, Error> {
     read_private_file(path).ok_or_else(|| {

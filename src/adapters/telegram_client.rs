@@ -12,8 +12,9 @@ use grammers_tl_types as tl;
 use tokio::task::JoinHandle;
 
 use crate::adapters::telegram::{
-    StoredSession, TelegramTransport, TransportError, contacts_from_address_book,
-    contacts_from_found, input_peer, read_credentials, receipt_from, send_request,
+    StoredSession, TelegramTransport, TransportError, UploadPart, contacts_from_address_book,
+    contacts_from_found, input_peer, read_credentials, receipt_from, send_media_request,
+    send_request, upload_parts, uploaded_file,
 };
 use crate::config::{TelegramConfig, TelegramPeer};
 use crate::error::{DeliveryError, Error, Outcome};
@@ -144,10 +145,29 @@ impl TelegramTransport for GrammersTransport {
         Ok(true)
     }
 
+    async fn upload(
+        &self,
+        name: &str,
+        data: &[u8],
+        file_id: i64,
+    ) -> Result<tl::enums::InputFile, TransportError> {
+        for part in upload_parts(file_id, data) {
+            let saved = match part {
+                UploadPart::Small(request) => self.client.invoke(&request).await,
+                UploadPart::Big(request) => self.client.invoke(&request).await,
+            };
+            if !saved.map_err(|_| TransportError::Failed)? {
+                return Err(TransportError::Failed);
+            }
+        }
+        Ok(uploaded_file(file_id, name, data.len()))
+    }
+
     async fn send(
         &self,
         target: &TelegramPeer,
         text: &str,
+        media: Option<tl::enums::InputMedia>,
         random_id: i64,
     ) -> Result<Receipt, TransportError> {
         let peer = input_peer(target).ok_or_else(|| {
@@ -157,12 +177,18 @@ impl TelegramTransport for GrammersTransport {
                 Outcome::NotSent,
             ))
         })?;
-        let request = send_request(peer, text, random_id);
-        let updates = self
-            .client
-            .invoke(&request)
-            .await
-            .map_err(|_| TransportError::Failed)?;
+        let updates = match media {
+            Some(media) => {
+                let request = send_media_request(peer, text, media, random_id);
+                self.client.invoke(&request).await
+            }
+            None => {
+                self.client
+                    .invoke(&send_request(peer, text, random_id))
+                    .await
+            }
+        }
+        .map_err(|_| TransportError::Failed)?;
         Ok(receipt_from(&updates, random_id))
     }
 
