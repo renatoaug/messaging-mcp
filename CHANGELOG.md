@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.0](https://github.com/renatoaug/messaging-mcp/compare/v0.6.0...v0.7.0) (2026-11-06)
+
+### Features
+
+* delete old plans and report refused telegram sends as not sent ([#1](https://github.com/renatoaug/messaging-mcp/issues/1)) ([4d87d4c](https://github.com/renatoaug/messaging-mcp/commit/4d87d4c3452ff998c1dcb5f362fd4feb3e78b667))
+
 ## [0.6.0](https://github.com/renatoaug/messaging-mcp/compare/v0.5.0...v0.6.0) (2026-11-06)
 
 ### Features
