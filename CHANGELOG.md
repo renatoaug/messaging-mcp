@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.9.0](https://github.com/renatoaug/messaging-mcp/compare/v0.8.0...v0.9.0) (2026-11-06)
+
+### Features
+
+* suggest replies in the user's tone and show a demo in the readme ([#3](https://github.com/renatoaug/messaging-mcp/issues/3)) ([b58cdd1](https://github.com/renatoaug/messaging-mcp/commit/b58cdd1d2e5b2b21fca328244ca8199e77bb085a))
+
 ## [0.8.0](https://github.com/renatoaug/messaging-mcp/compare/v0.7.0...v0.8.0) (2026-11-06)
 
 ### Features
