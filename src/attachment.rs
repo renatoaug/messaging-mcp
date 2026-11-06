@@ -220,6 +220,18 @@ pub fn load_copy(state_dir: &Path, plan_id: &str, sha256: &str) -> Result<Vec<u8
     Ok(data)
 }
 
+/// The names in the copies folder: plan IDs, and any leftover temporary file.
+pub fn copy_names(state_dir: &Path) -> Vec<String> {
+    fs::read_dir(files_dir(state_dir)).map_or_else(
+        |_| Vec::new(),
+        |entries| {
+            entries
+                .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+                .collect()
+        },
+    )
+}
+
 /// Removes a plan's copy once it can never be sent again. Best effort: a leftover copy is only
 /// disk space, never a send.
 pub fn remove_copy(state_dir: &Path, plan_id: &str) {

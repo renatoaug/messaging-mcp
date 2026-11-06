@@ -6,7 +6,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use grammers_client::Client;
-use grammers_mtsender::{ConnectionParams, NoRetries, SenderPool, SenderPoolHandle};
+use grammers_mtsender::{
+    ConnectionParams, InvocationError, NoRetries, SenderPool, SenderPoolHandle,
+};
 use grammers_session::storages::MemorySession;
 use grammers_tl_types as tl;
 use tokio::task::JoinHandle;
@@ -14,8 +16,17 @@ use tokio::task::JoinHandle;
 use crate::adapters::telegram::{
     StoredSession, TelegramTransport, TransportError, UploadPart, contacts_from_address_book,
     contacts_from_found, history_request, input_peer, messages_from_history, read_credentials,
-    receipt_from, send_media_request, send_request, upload_parts, uploaded_file,
+    receipt_from, rejection, send_media_request, send_request, upload_parts, uploaded_file,
 };
+
+/// A refusal Telegram answered becomes "not sent"; anything else stays uncertain.
+fn classify(error: InvocationError) -> TransportError {
+    match error {
+        InvocationError::Rpc(rpc) => rejection(rpc.code, &rpc.name, rpc.value)
+            .map_or(TransportError::Failed, TransportError::Delivery),
+        _ => TransportError::Failed,
+    }
+}
 use crate::config::{TelegramConfig, TelegramPeer};
 use crate::error::{DeliveryError, Error, Outcome};
 use crate::identity::TELEGRAM_SESSION_ENV;
@@ -156,7 +167,7 @@ impl TelegramTransport for GrammersTransport {
                 UploadPart::Small(request) => self.client.invoke(&request).await,
                 UploadPart::Big(request) => self.client.invoke(&request).await,
             };
-            if !saved.map_err(|_| TransportError::Failed)? {
+            if !saved.map_err(classify)? {
                 return Err(TransportError::Failed);
             }
         }
@@ -188,7 +199,7 @@ impl TelegramTransport for GrammersTransport {
                     .await
             }
         }
-        .map_err(|_| TransportError::Failed)?;
+        .map_err(classify)?;
         Ok(receipt_from(&updates, random_id))
     }
 

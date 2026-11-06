@@ -1,6 +1,6 @@
 # Setup
 
-Updated: 2026-11-05
+Updated: 2026-11-06
 
 > The assistant runs the setup through MCP tools; the owner scans QR codes, reads one login code, and approves each real message in their client. **Both channels were set up this way end to end on 2026-11-05.** Records: [ADR-007](../decisions/ADR-007-agent-runs-setup.md), [ADR-008](../decisions/ADR-008-own-whatsapp-bridge.md).
 
@@ -68,6 +68,7 @@ The setup tools write it; editing by hand works too, followed by a reconnect. Re
 | `approval` | `terminal`, `client-prompt`, `dialog` or `agent` (see above) | `terminal` |
 | `stateDir` | The ledger's folder, created 0700. Every client must use the same one | `.messaging-mcp-state` (`state` in the created config) |
 | `planTtlSeconds` | How long a plan, and its approval, stay valid (30–86400) | `600` |
+| `planRetentionDays` | Days a plan, with its text, is kept after it was prepared, 1–3650 | `30` |
 | `maxSendsPerMinute` | Attempts per minute across all clients (1–60) | `6` |
 | `recipients` | Recipients written by hand; `allow_recipient` stores others in the ledger | `[]` |
 | `whatsapp.accountLabel` | The paired account; `whatsapp_setup` sets it from the bridge | — |
@@ -94,8 +95,3 @@ Each secret comes from an environment variable first, then from its file. Files 
 ## Without the assistant
 
 Every step also works from a terminal: `messaging-mcp telegram-login` (phone code instead of QR), `allow whatsapp|telegram`, `approve`, `revoke`, `whatsapp-bridge-stop`. `messaging-mcp --help` lists them.
-
-## Still open
-
-- [x] Entering the Telegram credentials without a browser the assistant can drive → `messaging-mcp telegram-credentials`.
-- [ ] Moving from the TypeScript version: its Telegram session file is not compatible, and its state directory (`.bridge-state`) is not read.

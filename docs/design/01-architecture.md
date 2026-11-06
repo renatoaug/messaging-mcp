@@ -1,6 +1,6 @@
 # Architecture
 
-Updated: 2026-11-05
+Updated: 2026-11-06
 
 > One binary, two front doors (MCP over stdio and the CLI), one core and one ledger. **Both channels have sent real messages (2026-11-05).** Records: [ADR-001](../decisions/ADR-001-rust-single-binary.md), [ADR-002](../decisions/ADR-002-plans-sent-at-most-once.md), [ADR-007](../decisions/ADR-007-agent-runs-setup.md).
 
@@ -111,12 +111,3 @@ A plan can carry one file, given to `prepare_message` as `filePath` (or `--file`
 | `approval client-prompt\|agent\|terminal\|dialog` | The owner | How live messages are approved; `client-prompt` also makes Claude Code and Codex ask before `send_message`, `agent` removes those prompts ([02-setup.md](02-setup.md#approving-messages)) |
 
 Every command takes `--config FILE`; without it, `MESSAGING_MCP_CONFIG`, then `~/.config/messaging-mcp/messaging-mcp.config.json`, created in dry-run on first use. Errors go to stderr as one JSON line, exit code 1.
-
-## Still open
-
-- [x] A first live send on Telegram → two messages to Saved Messages on 2026-11-05.
-- [x] A first live send on WhatsApp → one message to the owner's own number on 2026-11-05.
-- [ ] Deleting old plans: nothing does yet, and their text stays in the ledger.
-- [ ] An approval service under a separate OS user, for a boundary that holds against an agent with a shell.
-- [ ] Optional formatting (Markdown to Telegram entities), shown raw in the approval.
-- [ ] Reading messages: not built, and needs its own record.

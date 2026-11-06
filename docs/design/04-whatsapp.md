@@ -1,6 +1,6 @@
 # WhatsApp
 
-Updated: 2026-11-05
+Updated: 2026-11-06
 
 > WhatsApp goes through our own bridge, `messaging-mcp-whatsapp-bridge`, a small Go program on `whatsmeow` that links to your account as a WhatsApp Web device. One bridge runs on the machine; every client uses it. The assistant starts and pairs it with `whatsapp_setup`. **Tested end to end on 2026-11-05: paired by QR, one message sent to the owner's own number after approval in Claude Code.** Records: [ADR-008](../decisions/ADR-008-own-whatsapp-bridge.md), [ADR-007](../decisions/ADR-007-agent-runs-setup.md).
 
@@ -60,10 +60,3 @@ GET /api/messages?chat=<JID>&limit=20        → 200 {"messages": [{"from": "Nes
 ```
 
 `/api/chats` matches 2–64 characters, ignoring case and accents, against the account's contacts, its groups and the names in stored messages, up to 20. `/api/messages` returns the last 1–50 messages, oldest first. `read_messages` with `channel: whatsapp` calls them; a phone number is read directly.
-
-## Still open
-
-- [x] Restarting the bridge after the machine restarts → the MCP server resumes a paired bridge when it starts.
-- [x] Finding a chat by name → `/api/chats`, used by `read_messages`; `search_contacts` and `allow_recipient` still take WhatsApp numbers only.
-- [ ] Asking the phone for older history (on-demand history sync), untested.
-- [ ] Replacing the bridge with an in-process Rust client, which would remove the second binary ([ADR-008](../decisions/ADR-008-own-whatsapp-bridge.md)).

@@ -1,6 +1,6 @@
 # Telegram
 
-Updated: 2026-11-05
+Updated: 2026-11-06
 
 > Telegram sends as your own user through MTProto, Telegram's protocol, with `grammers`. Not a bot. **Tested end to end on 2026-11-05: the agent created the app, logged in by QR (twice, including a full reset), and sent two messages to Saved Messages after approval in Claude Code. Contact search has not run against a real account yet.** Records: [ADR-004](../decisions/ADR-004-telegram-personal-mtproto.md), [ADR-006](../decisions/ADR-006-contact-search-suggests.md), [ADR-007](../decisions/ADR-007-agent-runs-setup.md).
 
@@ -34,7 +34,7 @@ IDs are positive decimal numbers, without the Bot API's `-100` prefix. The acces
 4. Call `messages.sendMessage` once: the plan's text exactly, no entities (so `**this**` stays literal), no link preview, no paid stars, no paid flood skip, and a `random_id` derived from the plan ID. With a file, `messages.sendMedia` instead, with the same rules for the caption: a photo, or a document that keeps its file name and is never turned into a video, voice note or sticker.
 5. Close the connection. A close error never replaces the result.
 
-From step 4 on, any error or a timeout is `TELEGRAM_OUTCOME_UNKNOWN`. That includes errors Telegram might have meant as "rejected": we do not tell them apart yet, so we assume the worst. The sender pool has `NoRetries`, and a flood wait is never slept through.
+From step 4 on, an error Telegram answered means it refused the request and created no message, so it is "not sent": `TELEGRAM_REJECTED` for a 400, 403 or 406 (such as `PEER_ID_INVALID` or `CHAT_WRITE_FORBIDDEN`), `TELEGRAM_NOT_AUTHORIZED` for a 401, `TELEGRAM_FLOOD_WAIT` for a 420 (with the seconds to wait) and `TELEGRAM_DC_MOVED` for a 303, when Telegram moved the account to another datacenter; the fix is to log in again, as the session is not moved automatically. The error's name only picks our message; Telegram's text never reaches the agent. A server error (5xx), a lost connection or a timeout is `TELEGRAM_OUTCOME_UNKNOWN`. The sender pool has `NoRetries`, and a flood wait is never slept through.
 
 The receipt's message ID comes only from the update that carries our `random_id`, never from another update in the same answer.
 
@@ -61,11 +61,3 @@ From the assistant, `allow_recipient` with the result's `reference` (`user:42`) 
 ## Reading a chat
 
 `read_messages` with `channel: telegram` finds the chat with the same search as above, then calls `messages.getHistory` once for its last 1–50 messages. It runs in live mode only, checks the account like a send, and returns each message oldest first with who wrote it (`you` for your own), its time and its text; media becomes a label (`[photo]`, `[file]`) followed by its caption, and service messages are left out. With several matches it reads nothing and returns them; the agent asks you and calls again with the `reference`, which the server remembers from the last search. Any chat can be read, allowed or not ([ADR-012](../decisions/ADR-012-read-chats-when-the-owner-asks.md)).
-
-## Still open
-
-- [x] A QR login and a send to Saved Messages against a real account → done on 2026-11-05.
-- [x] A contact search against a real account → done on 2026-11-05, which led to filtering the address book here.
-- [ ] `telegram-login` (phone code) and `telegram-password` against a real account.
-- [ ] Tell Telegram's definite rejections (for example `PEER_ID_INVALID`) apart from uncertain errors, so they become `failed`.
-- [ ] Datacenter migration during a send is not handled: a session whose home datacenter moved fails as uncertain.

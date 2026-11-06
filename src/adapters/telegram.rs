@@ -99,6 +99,57 @@ fn uncertain() -> DeliveryError {
     )
 }
 
+/// What Telegram's error answer means. An RPC error is Telegram's reply to the request, so a
+/// 303, 400, 401, 403, 406 or 420 means the request was refused and no message was created; only
+/// a 5xx, a lost connection or a timeout leaves the outcome unknown. The message we show is our
+/// own: the error's name only picks it, and Telegram's text never reaches the agent.
+pub fn rejection(code: i32, name: &str, wait_seconds: Option<u32>) -> Option<DeliveryError> {
+    let not_sent =
+        |code, message: String| Some(DeliveryError::new(code, message, Outcome::NotSent));
+    match code {
+        303 => not_sent(
+            "TELEGRAM_DC_MOVED",
+            "Telegram moved this account to another datacenter. Nothing was sent. Log in again \
+             with telegram_login, then prepare the message again."
+                .to_string(),
+        ),
+        401 => Some(not_authorized()),
+        420 => not_sent(
+            "TELEGRAM_FLOOD_WAIT",
+            match wait_seconds {
+                Some(seconds) => format!(
+                    "Telegram asked to wait {seconds} seconds before sending. Nothing was sent."
+                ),
+                None => "Telegram asked to wait before sending. Nothing was sent.".to_string(),
+            },
+        ),
+        400 | 403 | 406 => {
+            let message = match name {
+                "PEER_ID_INVALID" | "INPUT_USER_DEACTIVATED" | "USER_DEACTIVATED" => {
+                    "Telegram cannot reach this recipient (the account may be gone). Nothing was \
+                     sent."
+                }
+                "USER_IS_BLOCKED" | "YOU_BLOCKED_USER" => {
+                    "This person blocked the account, or the account blocked them. Nothing was \
+                     sent."
+                }
+                "CHAT_WRITE_FORBIDDEN"
+                | "CHAT_RESTRICTED"
+                | "USER_BANNED_IN_CHANNEL"
+                | "CHANNEL_PRIVATE"
+                | "CHAT_ADMIN_REQUIRED"
+                | "PRIVACY_PREMIUM_REQUIRED"
+                | "ALLOW_PAYMENT_REQUIRED" => {
+                    "This account is not allowed to write to this chat. Nothing was sent."
+                }
+                _ => "Telegram refused the message. Nothing was sent.",
+            };
+            not_sent("TELEGRAM_REJECTED", message.to_string())
+        }
+        _ => None,
+    }
+}
+
 fn upload_failed() -> DeliveryError {
     DeliveryError::new(
         "TELEGRAM_UPLOAD_FAILED",

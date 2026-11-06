@@ -9,8 +9,8 @@ use grammers_tl_types::{self as tl, Serializable};
 use messaging_mcp::adapters::telegram::{
     BIG_FILE_BYTES, TelegramAdapter, TelegramTransport, TransportError, TransportFactory,
     UPLOAD_PART_BYTES, UploadPart, clean_name, history_request, input_media, input_peer,
-    messages_from_history, receipt_from, send_media_request, send_request, telegram_random_id,
-    upload_parts, uploaded_file,
+    messages_from_history, receipt_from, rejection, send_media_request, send_request,
+    telegram_random_id, upload_parts, uploaded_file,
 };
 use messaging_mcp::adapters::whatsapp::WhatsAppAdapter;
 use messaging_mcp::attachment::{Kind, Outgoing, OutgoingFile};
@@ -734,4 +734,46 @@ async fn whatsapp_finds_and_reads_chats_with_the_token() {
         .await
         .unwrap_err();
     assert_eq!(error.code, "WHATSAPP_READ_FAILED");
+}
+
+#[test]
+fn telegram_refusals_are_not_sent_and_server_errors_stay_uncertain() {
+    let cases = [
+        (400, "PEER_ID_INVALID", None, "TELEGRAM_REJECTED"),
+        (403, "CHAT_WRITE_FORBIDDEN", None, "TELEGRAM_REJECTED"),
+        (400, "SOMETHING_NEW", None, "TELEGRAM_REJECTED"),
+        (406, "ANYTHING", None, "TELEGRAM_REJECTED"),
+        (
+            401,
+            "AUTH_KEY_UNREGISTERED",
+            None,
+            "TELEGRAM_NOT_AUTHORIZED",
+        ),
+        (303, "USER_MIGRATE", Some(4), "TELEGRAM_DC_MOVED"),
+        (420, "FLOOD_WAIT", Some(31), "TELEGRAM_FLOOD_WAIT"),
+    ];
+    for (code, name, value, expected) in cases {
+        let error = rejection(code, name, value).unwrap();
+        assert_eq!(
+            (error.code, error.outcome),
+            (expected, Outcome::NotSent),
+            "{code} {name}"
+        );
+        assert!(
+            !error.message.contains(name),
+            "Telegram's text never reaches the agent"
+        );
+    }
+    assert!(
+        rejection(420, "FLOOD_WAIT", Some(31))
+            .unwrap()
+            .message
+            .contains("31 seconds")
+    );
+    for code in [500, 503, -503] {
+        assert!(
+            rejection(code, "INTERNAL", None).is_none(),
+            "{code} stays uncertain"
+        );
+    }
 }

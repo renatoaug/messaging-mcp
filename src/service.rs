@@ -114,6 +114,14 @@ impl Adapters {
     }
 }
 
+/// What a sweep removed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Swept {
+    pub plans: usize,
+    pub copies: usize,
+}
+
 /// The readers for each channel, used only when the owner asks to see a chat.
 #[derive(Clone, Default)]
 pub struct Readers {
@@ -271,8 +279,35 @@ impl MessagingService {
         sha256_hex(material.to_string().as_bytes())
     }
 
+    /// Deletes plans older than `planRetentionDays`, and every file copy whose plan can never be
+    /// sent: gone, attempted or expired. Runs inside a write transaction, so it never removes the
+    /// copy of a plan another process is preparing.
+    pub fn sweep(&self) -> Result<Swept, Error> {
+        let now = (self.now)();
+        let state_dir = &self.config.state_dir;
+        self.store.transaction(|tx| {
+            let plans =
+                tx.delete_plans_before(now - self.config.plan_retention_days * 86_400_000)?;
+            let mut copies = 0;
+            for name in attachment::copy_names(state_dir) {
+                let sendable = tx
+                    .get(&name)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|plan| plan.status.is_open() && now < plan.expires_at);
+                if !sendable {
+                    attachment::remove_copy(state_dir, &name);
+                    copies += 1;
+                }
+            }
+            Ok(Swept { plans, copies })
+        })
+    }
+
     pub fn prepare(&self, input: &PrepareInput) -> Result<Plan, Error> {
         validate_prepare(input)?;
+        // Housekeeping on the way: an old plan's text and a stale copy are only data at rest.
+        let _ = self.sweep();
         let recipient = match self.configured_recipient(&input.recipient_id) {
             Some(recipient) => recipient.clone(),
             None => self

@@ -1,12 +1,12 @@
 # Testing
 
-Updated: 2026-11-05
+Updated: 2026-11-06
 
-> An offline suite that covers the whole flow with fakes, a coverage floor, and live tests that only the owner can run. **The offline suite passes on macOS. The release pipeline ran (v0.1.1, four binaries); the pull request checks on Linux and macOS have not run yet, as no pull request was opened. Both channels passed their live test on 2026-11-05.**
+> An offline suite that covers the whole flow with fakes, a coverage floor, and live tests that only the owner can run. **The offline suite passes on macOS. The release pipeline runs on every push to main. Both channels passed their live test on 2026-11-05.**
 
 ## The offline suite
 
-`cargo test` runs 83 tests in `tests/`, grouped by area:
+`cargo test` runs 85 tests in `tests/`, grouped by area:
 
 | File | Covers |
 |---|---|
@@ -43,16 +43,6 @@ Contact search, 2026-11-05: Telegram's `contacts.search` returned none of the ow
 
 Codex, 2026-11-05, in the ChatGPT desktop app: its permission prompt showed `planId`, `recipientId` and `text`. Surprises: Codex declares MCP's approval dialog but declined it unseen, so every send was refused after the owner allowed the prompt; and with "Approve for me" its reviewer allowed the prompt on its own. Hence [ADR-009](../decisions/ADR-009-approval-is-the-mode-the-owner-chose.md): one approval mode, no second confirmation, and a warning to keep "Ask for approval".
 
-What is left, in this order, stopping at the first surprise:
+Agent approval, files and reading, 2026-11-05 and 2026-11-06 ([ADR-010](../decisions/ADR-010-the-agent-can-be-the-approval.md), [ADR-011](../decisions/ADR-011-files-are-copied-when-prepared.md), [ADR-012](../decisions/ADR-012-read-chats-when-the-owner-asks.md)): with `approval: agent`, Codex and Claude Code sent after the owner's yes in the chat; a PNG went as a photo on WhatsApp and Telegram; Telegram's history of a contact was read, and a reply sent to them. Surprise: Codex kept MCP processes started with the old binary until they were stopped.
 
-1. Codex: a send with `client-prompt` after the fix, approved in its prompt.
-
-Record what happened in this note, and turn each surprise into a test.
-
-## Still open
-
-- [x] The first run of the release pipeline → v0.1.1 with four binaries.
-- [ ] The first run of the pull request checks.
-- [x] Telegram live → 2026-11-05.
-- [x] WhatsApp live → 2026-11-05.
-- [ ] The rest of the live test above.
+A new live test is recorded in this note, and each surprise becomes an offline test.
