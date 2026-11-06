@@ -33,7 +33,7 @@ func TestTheInboxKeepsThreeDaysOncePerMessage(t *testing.T) {
 	inbox := openTestInbox(t, now)
 	chat := "5511988887777@s.whatsapp.net"
 	add := func(id string, age time.Duration, text string) {
-		m := Stored{Chat: chat, ID: id, From: "Nestor", At: now.Add(-age).UnixMilli(), Text: text}
+		m := Stored{Chat: chat, ID: id, From: "Alice", At: now.Add(-age).UnixMilli(), Text: text}
 		if err := inbox.Add(ctx, m); err != nil {
 			t.Fatal(err)
 		}
@@ -57,7 +57,7 @@ func TestTheInboxKeepsThreeDaysOncePerMessage(t *testing.T) {
 	if kept, _ := inbox.Recent(ctx, chat, 10); len(kept) != 1 || kept[0].Text != "second" {
 		t.Fatalf("after pruning: %v", kept)
 	}
-	if names, _ := inbox.Senders(ctx); names[chat] != "Nestor" {
+	if names, _ := inbox.Senders(ctx); names[chat] != "Alice" {
 		t.Fatalf("senders: %v", names)
 	}
 }
@@ -79,7 +79,7 @@ func TestMessageTextLabelsMediaAndSkipsTheRest(t *testing.T) {
 			t.Fatalf("got %q, want %q", got, tc.want)
 		}
 	}
-	if fold("Néstor") != "nestor" {
-		t.Fatalf("fold: %q", fold("Néstor"))
+	if fold("Álice") != "alice" {
+		t.Fatalf("fold: %q", fold("Álice"))
 	}
 }

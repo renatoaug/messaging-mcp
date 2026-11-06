@@ -6,7 +6,7 @@
 
 ## Context
 
-The owner wants to ask "what did Nestor send me on Telegram?" or "look at X's message on WhatsApp", for anyone, not only allowed recipients. Telegram keeps the history on its servers. WhatsApp is end-to-end encrypted: its servers drop a message once delivered, and a linked device cannot fetch past messages reliably (it can only ask the phone, which may not answer). So the bridge can show only what it saw arrive.
+The owner wants to ask "what did Alice send me on Telegram?" or "look at X's message on WhatsApp", for anyone, not only allowed recipients. Telegram keeps the history on its servers. WhatsApp is end-to-end encrypted: its servers drop a message once delivered, and a linked device cannot fetch past messages reliably (it can only ask the phone, which may not answer). So the bridge can show only what it saw arrive.
 
 ## Decision
 

@@ -37,7 +37,7 @@ func TestAVoiceMessageIsKeptAsItsTranscript(t *testing.T) {
 	inbox := openTestInbox(t, time.Now())
 	chat := "5511988887777@s.whatsapp.net"
 	audio := &waE2E.AudioMessage{Seconds: proto.Uint32(7)}
-	if err := inbox.Add(ctx, Stored{Chat: chat, ID: "v1", From: "Nestor", At: time.Now().UnixMilli(), Text: messageText(&waE2E.Message{AudioMessage: audio})}); err != nil {
+	if err := inbox.Add(ctx, Stored{Chat: chat, ID: "v1", From: "Alice", At: time.Now().UnixMilli(), Text: messageText(&waE2E.Message{AudioMessage: audio})}); err != nil {
 		t.Fatal(err)
 	}
 	tr := NewTranscriber(fakeTranscriber(t), "/config.json", store)
