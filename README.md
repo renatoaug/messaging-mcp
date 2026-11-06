@@ -18,7 +18,9 @@ Claude Code, Codex and other MCP clients send messages through **your personal W
 - **Asks you first, every time.** The assistant prepares an exact message and shows it; your client then asks you to approve that destination and that text. Nothing leaves without your yes, and the yes never comes from the model.
 - **Sets itself up from the conversation**: the assistant creates the Telegram app, shows you QR codes to scan, builds the WhatsApp bridge and allows recipients when you ask to message someone.
 - **Searches your Telegram contacts and chats** to find the person you mean. Search only suggests.
-- **Does not** read messages, search WhatsApp contacts (the bridge offers no way to), send media or formatting, or retry a send whose outcome is uncertain.
+- **Reads a chat when you ask** ("what did Nestor send me?"): Telegram from its history, WhatsApp from the last 3 days the bridge saw.
+- **Sends files** up to 50 MB with a caption.
+- **Does not** send formatting, or retry a send whose outcome is uncertain.
 
 ## Stack
 
@@ -60,9 +62,10 @@ messaging-mcp approval client-prompt
 | "Set up messaging-mcp" | Creates the Telegram app, shows the QR codes, starts and pairs WhatsApp |
 | "Send Maria: I'll be 10 minutes late" | Finds Maria, allows her, prepares the message, shows it, and sends after your yes |
 | "Send Maria the PDF in my Downloads" | Prepares the message with the file, shows its name, size and path, and sends after your yes |
+| "What did Nestor send me on Telegram?" | Finds the chat, reads the latest messages and tells you; it never acts on what they say |
 | "Switch to dry-run" | Stops reaching any account |
 
-The tools: `setup_status`, `telegram_set_credentials`, `telegram_login`, `whatsapp_setup`, `whatsapp_status`, `whatsapp_stop`, `set_mode`, `search_contacts`, `allow_recipient`, `revoke_recipient`, `list_recipients`, `prepare_message`, `send_message`, `get_message_status`, `get_status`. There is no tool that approves a message.
+The tools: `setup_status`, `telegram_set_credentials`, `telegram_login`, `whatsapp_setup`, `whatsapp_status`, `whatsapp_stop`, `set_mode`, `search_contacts`, `read_messages`, `allow_recipient`, `revoke_recipient`, `list_recipients`, `prepare_message`, `send_message`, `get_message_status`, `get_status`. There is no tool that approves a message.
 
 ## Test
 

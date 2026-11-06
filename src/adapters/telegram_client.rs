@@ -13,13 +13,13 @@ use tokio::task::JoinHandle;
 
 use crate::adapters::telegram::{
     StoredSession, TelegramTransport, TransportError, UploadPart, contacts_from_address_book,
-    contacts_from_found, input_peer, read_credentials, receipt_from, send_media_request,
-    send_request, upload_parts, uploaded_file,
+    contacts_from_found, history_request, input_peer, messages_from_history, read_credentials,
+    receipt_from, send_media_request, send_request, upload_parts, uploaded_file,
 };
 use crate::config::{TelegramConfig, TelegramPeer};
 use crate::error::{DeliveryError, Error, Outcome};
 use crate::identity::TELEGRAM_SESSION_ENV;
-use crate::plan::{Contact, Receipt};
+use crate::plan::{ChatMessage, Contact, Receipt};
 use crate::secrets::{process_env, secret_from};
 
 /// A sender pool that never retries on its own: an uncertain send must stay uncertain.
@@ -226,6 +226,21 @@ impl TelegramTransport for GrammersTransport {
             }
         }
         Ok(contacts)
+    }
+
+    async fn history(
+        &self,
+        target: &TelegramPeer,
+        chat_name: &str,
+        limit: i32,
+    ) -> Result<Vec<ChatMessage>, TransportError> {
+        let peer = input_peer(target).ok_or(TransportError::Failed)?;
+        let history = self
+            .client
+            .invoke(&history_request(peer, limit))
+            .await
+            .map_err(|_| TransportError::Failed)?;
+        Ok(messages_from_history(&history, chat_name))
     }
 
     async fn close(&self) -> Result<(), TransportError> {

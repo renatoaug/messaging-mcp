@@ -16,7 +16,10 @@ use crate::attachment::{Kind, Outgoing, OutgoingFile};
 use crate::config::{Recipient, TelegramConfig, TelegramPeer};
 use crate::error::{DeliveryError, Error, Outcome};
 use crate::identity::{TELEGRAM_API_HASH_ENV, TELEGRAM_API_ID_ENV};
-use crate::plan::{Channel, ChannelAdapter, Contact, ContactDirectory, Receipt};
+use crate::plan::{
+    Channel, ChannelAdapter, ChatMatch, ChatMessage, ChatTarget, Contact, ContactDirectory,
+    MessageReader, Receipt,
+};
 use crate::secrets::{Env, secret_from};
 use crate::service::sha256_hex;
 
@@ -55,6 +58,13 @@ pub trait TelegramTransport: Send + Sync {
         random_id: i64,
     ) -> Result<Receipt, TransportError>;
     async fn search(&self, query: &str, limit: i32) -> Result<Vec<Contact>, TransportError>;
+    /// The chat's last messages, oldest first. Read only.
+    async fn history(
+        &self,
+        target: &TelegramPeer,
+        chat_name: &str,
+        limit: i32,
+    ) -> Result<Vec<ChatMessage>, TransportError>;
     async fn close(&self) -> Result<(), TransportError>;
 }
 
@@ -220,6 +230,42 @@ impl ContactDirectory for TelegramAdapter {
             .await
             .map_err(|error| Error::new(error.code, error.message))?;
         let result = timeout(self.timeout, transport.search(query, limit)).await;
+        close(transport.as_ref()).await;
+        result.map_err(|_| failed())?.map_err(|_| failed())
+    }
+}
+
+#[async_trait]
+impl MessageReader for TelegramAdapter {
+    async fn find_chats(&self, query: &str) -> Result<Vec<ChatMatch>, Error> {
+        Ok(self
+            .search(query, 20)
+            .await?
+            .into_iter()
+            .map(|contact| ChatMatch {
+                channel: Channel::Telegram,
+                reference: contact.reference,
+                name: contact.name,
+                target: ChatTarget::Telegram(contact.peer),
+            })
+            .collect())
+    }
+
+    async fn read(&self, chat: &ChatMatch, limit: i32) -> Result<Vec<ChatMessage>, Error> {
+        let failed = || {
+            Error::new(
+                "TELEGRAM_READ_FAILED",
+                "Telegram did not return the messages. Nothing was sent.",
+            )
+        };
+        let ChatTarget::Telegram(peer) = &chat.target else {
+            return Err(failed());
+        };
+        let transport = self
+            .open()
+            .await
+            .map_err(|error| Error::new(error.code, error.message))?;
+        let result = timeout(self.timeout, transport.history(peer, &chat.name, limit)).await;
         close(transport.as_ref()).await;
         result.map_err(|_| failed())?.map_err(|_| failed())
     }
@@ -465,6 +511,93 @@ pub fn send_media_request(
         allow_paid_stars: None,
         suggested_post: None,
     }
+}
+
+/// The request for a chat's last messages: the newest `limit`, with no offset.
+pub fn history_request(
+    peer: tl::enums::InputPeer,
+    limit: i32,
+) -> tl::functions::messages::GetHistory {
+    tl::functions::messages::GetHistory {
+        peer,
+        offset_id: 0,
+        offset_date: 0,
+        add_offset: 0,
+        limit,
+        max_id: 0,
+        min_id: 0,
+        hash: 0,
+    }
+}
+
+fn media_label(media: &tl::enums::MessageMedia) -> &'static str {
+    match media {
+        tl::enums::MessageMedia::Photo(_) => "[photo]",
+        tl::enums::MessageMedia::Document(_) => "[file]",
+        tl::enums::MessageMedia::Geo(_) | tl::enums::MessageMedia::GeoLive(_) => "[location]",
+        tl::enums::MessageMedia::Contact(_) => "[contact]",
+        tl::enums::MessageMedia::Poll(_) => "[poll]",
+        _ => "[media]",
+    }
+}
+
+/// The messages of a history answer, oldest first, with who wrote each. Service messages (joins,
+/// pins) are left out. `chat_name` names the other side of a private chat.
+pub fn messages_from_history(
+    history: &tl::enums::messages::Messages,
+    chat_name: &str,
+) -> Vec<ChatMessage> {
+    let (messages, users) = match history {
+        tl::enums::messages::Messages::Messages(m) => (&m.messages, &m.users),
+        tl::enums::messages::Messages::Slice(m) => (&m.messages, &m.users),
+        tl::enums::messages::Messages::ChannelMessages(m) => (&m.messages, &m.users),
+        tl::enums::messages::Messages::NotModified(_) => return Vec::new(),
+    };
+    let name_of = |id: i64| {
+        users.iter().find_map(|user| match user {
+            tl::enums::User::User(user) if user.id == id => {
+                let name = [user.first_name.as_deref(), user.last_name.as_deref()]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                Some(clean_name(&name))
+            }
+            _ => None,
+        })
+    };
+    let mut read: Vec<ChatMessage> = messages
+        .iter()
+        .filter_map(|message| match message {
+            tl::enums::Message::Message(message) => {
+                let from = if message.out {
+                    "you".to_string()
+                } else {
+                    match &message.from_id {
+                        Some(tl::enums::Peer::User(user)) => name_of(user.user_id)
+                            .filter(|name| !name.is_empty())
+                            .unwrap_or_else(|| chat_name.to_string()),
+                        _ => chat_name.to_string(),
+                    }
+                };
+                let text = match &message.media {
+                    Some(media) if message.message.is_empty() => media_label(media).to_string(),
+                    Some(media) => format!("{} {}", media_label(media), message.message),
+                    None => message.message.clone(),
+                };
+                Some(ChatMessage {
+                    from,
+                    from_me: message.out,
+                    at: i64::from(message.date) * 1000,
+                    text,
+                })
+            }
+            _ => None,
+        })
+        .collect();
+    // Telegram answers newest first.
+    read.sort_by_key(|message| message.at);
+    read
 }
 
 /// Takes the message ID only from the update matching our `random_id`, never from another one.

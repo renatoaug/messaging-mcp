@@ -6,19 +6,20 @@ Updated: 2026-11-05
 
 ## The offline suite
 
-`cargo test` runs 75 tests in `tests/`, grouped by area:
+`cargo test` runs 83 tests in `tests/`, grouped by area:
 
 | File | Covers |
 |---|---|
 | `service.rs` | The state machine: dry-run, approval, idempotency across restarts, the concurrent claim, terminal results, validation, expiry and context changes, the shared rate limit, the crash after the claim, identity rotation, the failed final write, search and allow/revoke, the approval text |
 | `approval.rs` | The real binary with a client that answers the approval dialog: each mode (`dialog` approved and declined, `client-prompt` and `agent` without a second question even when the client declares the dialog, `terminal`), no dialog, and a send that does not repeat the prepared message |
 | `attachment.rs` | Files: the reviewed copy is what leaves even when the original changes, a changed copy is never sent, hidden, linked, protected, empty, missing and oversized paths are refused, the caption limit, photos recognized by content, a reused key keeping the first copy, dry-run cleanup |
+| `reading.rs` | Reading a chat: live only, one match read and marked as data, several matches listed then read by reference, an exact name winning, a WhatsApp number read directly, validation |
 | `adapters.rs` | WhatsApp against a local HTTP server (the contract, files in base64, a failed upload, timeouts, odd bodies, rejections, no token); Telegram against a fake transport (authorization, a failed upload, timeout, close failure), the exact requests for text and media, upload parts, receipts, name cleaning |
 | `identity.rs` | The sender fingerprint, credentials, the session file format, which contacts are offered |
 | `setup.rs` | The default config, validated atomic writes, private files, credentials, the setup status and next steps, the login reading the file and not a stale copy, QR codes read from the bridge's drawing, the pages |
 | `config.rs` | Strict config, the loopback URL, private secret files, the state directory |
 | `cli.rs` | The real binary: an MCP client over stdio (including the setup tools and the config reload), the CLI across restarts, terminal-only commands refusing a pipe, the config created on first use |
-| `whatsapp-bridge/server_test.go` | The Go bridge's routes: the token on every route, health and the paired account, the QR code, one exact send, invalid requests sending nothing, a disconnected bridge attempting nothing, a failed send never reported as not sent, a file with its name and caption, invalid files refused, a failed upload reported as not sent |
+| `whatsapp-bridge/server_test.go` | The Go bridge's routes: the token on every route, health and the paired account, the QR code, one exact send, invalid requests sending nothing, a disconnected bridge attempting nothing, a failed send never reported as not sent, a file with its name and caption, invalid files refused, a failed upload reported as not sent, chats found by name, messages read from one chat; `inbox_test.go`: three days kept once per message, media labels |
 
 The suite never leaves loopback, never reads your config or session files, and never reads inherited credentials: functions that read the environment take an `Env`, tests pass `&|_| None`, and the binary runs with a cleared environment.
 

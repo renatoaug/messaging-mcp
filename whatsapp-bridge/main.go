@@ -1,8 +1,9 @@
 // Command messaging-mcp-whatsapp-bridge links one personal WhatsApp account as a WhatsApp Web
 // device and lets messaging-mcp send text and files through it, over HTTP on 127.0.0.1 only.
 //
-// It keeps the device session and nothing else: no message history, no stored media, no
-// webhooks. A file is held in memory only while it is sent. It never logs message contents. See docs/design/04-whatsapp.md.
+// It keeps the device session and the text of the last three days of messages (so the owner can
+// ask what someone sent), and nothing else: no stored media, no webhooks. A file is held in memory
+// only while it is sent. It never logs message contents. See docs/design/04-whatsapp.md.
 package main
 
 import (
@@ -17,6 +18,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -41,8 +43,90 @@ const (
 
 type whatsapp struct {
 	client *whatsmeow.Client
+	inbox  *Inbox
 	mu     sync.Mutex
 	qr     string
+}
+
+var errNoInbox = errors.New("messages are not available")
+
+// chatOf is the chat a message belongs to, by phone number when WhatsApp gave a hidden ID, so the
+// same person is one chat however their messages arrived.
+func (w *whatsapp) chatOf(ctx context.Context, chat types.JID) string {
+	chat = chat.ToNonAD()
+	if chat.Server == types.HiddenUserServer {
+		if pn, err := w.client.Store.LIDs.GetPNForLID(ctx, chat); err == nil && !pn.IsEmpty() {
+			chat = pn.ToNonAD()
+		}
+	}
+	return chat.String()
+}
+
+// keep stores a received or sent message for three days. Its contents are never logged.
+func (w *whatsapp) keep(ctx context.Context, info types.MessageInfo, message *waE2E.Message) {
+	if w.inbox == nil || info.Chat.Server == types.BroadcastServer {
+		return
+	}
+	from := info.PushName
+	if info.IsFromMe {
+		from = "you"
+	}
+	stored := Stored{
+		Chat: w.chatOf(ctx, info.Chat), ID: info.ID, From: from, FromMe: info.IsFromMe,
+		At: info.Timestamp.UnixMilli(), Text: messageText(message),
+	}
+	if err := w.inbox.Add(ctx, stored); err != nil {
+		log.Print("could not keep a message")
+	}
+}
+
+func (w *whatsapp) Find(ctx context.Context, query string) ([]Chat, error) {
+	want := fold(query)
+	found := map[string]string{}
+	contacts, err := w.client.Store.Contacts.GetAllContacts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for jid, info := range contacts {
+		for _, name := range []string{info.FullName, info.FirstName, info.PushName, info.BusinessName} {
+			if name != "" && strings.Contains(fold(name), want) {
+				found[w.chatOf(ctx, jid)] = name
+				break
+			}
+		}
+	}
+	if groups, err := w.client.GetJoinedGroups(ctx); err == nil {
+		for _, group := range groups {
+			if strings.Contains(fold(group.Name), want) {
+				found[group.JID.String()] = group.Name
+			}
+		}
+	}
+	if w.inbox != nil {
+		if senders, err := w.inbox.Senders(ctx); err == nil {
+			for chat, name := range senders {
+				if _, known := found[chat]; !known && strings.Contains(fold(name), want) {
+					found[chat] = name
+				}
+			}
+		}
+	}
+	chats := make([]Chat, 0, len(found))
+	for jid, name := range found {
+		chats = append(chats, Chat{JID: jid, Name: name})
+	}
+	sort.Slice(chats, func(i, j int) bool { return chats[i].Name < chats[j].Name })
+	if len(chats) > 20 {
+		chats = chats[:20]
+	}
+	return chats, nil
+}
+
+func (w *whatsapp) Read(ctx context.Context, chat types.JID, limit int) ([]Stored, error) {
+	if w.inbox == nil {
+		return nil, errNoInbox
+	}
+	return w.inbox.Recent(ctx, chat.ToNonAD().String(), limit)
 }
 
 func (w *whatsapp) setQR(code string) {
@@ -75,6 +159,11 @@ func (w *whatsapp) Send(ctx context.Context, to types.JID, text string, file *Fi
 	if err != nil {
 		return "", err
 	}
+	info := types.MessageInfo{
+		MessageSource: types.MessageSource{Chat: to, IsFromMe: true},
+		ID:            response.ID, Timestamp: response.Timestamp,
+	}
+	w.keep(context.WithoutCancel(ctx), info, message)
 	return response.ID, nil
 }
 
@@ -163,10 +252,20 @@ func run() error {
 	}
 	client := whatsmeow.NewClient(device, waLog.Noop)
 	bridge := &whatsapp{client: client}
+	inbox, err := OpenInbox(ctx, filepath.Join(*storeDir, "messages.db"))
+	if err != nil {
+		// Sending still works; only reading is unavailable.
+		log.Print("messages store unavailable")
+	} else {
+		bridge.inbox = inbox
+		defer inbox.Close()
+	}
 
 	exit := make(chan int, 1)
 	client.AddEventHandler(func(event any) {
-		switch event.(type) {
+		switch event := event.(type) {
+		case *events.Message:
+			bridge.keep(context.Background(), event.Info, event.Message)
 		case *events.PairSuccess:
 			bridge.setQR("")
 			log.Print("paired")

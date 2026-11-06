@@ -123,6 +123,7 @@ async fn an_mcp_client_lists_only_safe_tools_and_persists_both_dry_run_channels(
             "get_status",
             "list_recipients",
             "prepare_message",
+            "read_messages",
             "revoke_recipient",
             "search_contacts",
             "send_message",

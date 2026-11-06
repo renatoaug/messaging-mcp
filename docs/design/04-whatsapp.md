@@ -6,7 +6,7 @@ Updated: 2026-11-05
 
 ## The bridge
 
-The source is in `whatsapp-bridge/` (`main.go`, `server.go`, `server_test.go`). It keeps the device session in `store/session.db` and nothing else: no message history, no stored media, no webhooks; a file is held in memory only while it is sent. It never logs message contents. It listens only on `127.0.0.1`, and every route needs `Authorization: Bearer <token>`; the token is created on first start in `store/.bridge-token` (0600). The SQLite driver is pure Go, so it builds without a C compiler; releases ship it next to `messaging-mcp`.
+The source is in `whatsapp-bridge/` (`main.go`, `server.go`, `server_test.go`). It keeps the device session in `store/session.db` and the text of the last 3 days of messages in `store/messages.db` (0600, [reading a chat](#reading-a-chat)); no stored media, no webhooks, and a file is held in memory only while it is sent. It never logs message contents. It listens only on `127.0.0.1`, and every route needs `Authorization: Bearer <token>`; the token is created on first start in `store/.bridge-token` (0600). The SQLite driver is pure Go, so it builds without a C compiler; releases ship it next to `messaging-mcp`.
 
 ```text
 GET  /api/health → 200 {"connected": true, "paired": true, "jid": "5511999999999:12@s.whatsapp.net"}  (503 when not connected)
@@ -50,8 +50,20 @@ messaging-mcp allow whatsapp 5511977776666@s.whatsapp.net --id ana --label "Ana"
 
 A JID is the country code and number, then `@s.whatsapp.net`. Some Brazilian accounts are registered without the extra 9 of mobile numbers, as the live test showed. When in doubt, use the number `whatsapp_status` reports for yourself.
 
+## Reading a chat
+
+WhatsApp keeps no history on its servers, and a linked device cannot reliably fetch old messages, so the bridge keeps what it sees ([ADR-012](../decisions/ADR-012-read-chats-when-the-owner-asks.md)): every message it receives or sends, as text (media as a label such as `[photo]` or `[file: a.pdf]` with its caption), in `store/messages.db` (0600). Reactions, edits and other protocol messages are skipped. A chat reached through a hidden ID is stored under the person's number when WhatsApp knows it. Messages older than 3 days are deleted on start and on every new message.
+
+```text
+GET /api/chats?q=nestor                      → 200 {"chats": [{"jid": "5511988887777@s.whatsapp.net", "name": "Nestor"}]}
+GET /api/messages?chat=<JID>&limit=20        → 200 {"messages": [{"from": "Nestor", "fromMe": false, "at": 1793964129370, "text": "oi"}]}
+```
+
+`/api/chats` matches 2–64 characters, ignoring case and accents, against the account's contacts, its groups and the names in stored messages, up to 20. `/api/messages` returns the last 1–50 messages, oldest first. `read_messages` with `channel: whatsapp` calls them; a phone number is read directly.
+
 ## Still open
 
 - [x] Restarting the bridge after the machine restarts → the MCP server resumes a paired bridge when it starts.
-- [ ] A contact search: `whatsmeow` can read the account's contacts; not built.
+- [x] Finding a chat by name → `/api/chats`, used by `read_messages`; `search_contacts` and `allow_recipient` still take WhatsApp numbers only.
+- [ ] Asking the phone for older history (on-demand history sync), untested.
 - [ ] Replacing the bridge with an in-process Rust client, which would remove the second binary ([ADR-008](../decisions/ADR-008-own-whatsapp-bridge.md)).

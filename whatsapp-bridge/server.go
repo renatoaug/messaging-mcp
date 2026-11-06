@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -48,12 +49,22 @@ type File struct {
 	Data  []byte
 }
 
+// Chat is a person or group found by name.
+type Chat struct {
+	JID  string `json:"jid"`
+	Name string `json:"name"`
+}
+
 // Messenger is the WhatsApp side of the bridge. The HTTP layer depends only on this, so it can
 // be tested without an account. Send returns errUploadFailed when a file upload failed before
 // any message was sent.
 type Messenger interface {
 	Status() Status
 	Send(ctx context.Context, to types.JID, text string, file *File) (string, error)
+	// Find looks up the owner's contacts, groups and recent chats by name. Read only.
+	Find(ctx context.Context, query string) ([]Chat, error)
+	// Read returns a chat's messages from the last three days, oldest first.
+	Read(ctx context.Context, chat types.JID, limit int) ([]Stored, error)
 }
 
 type fileRequest struct {
@@ -141,6 +152,33 @@ func newHandler(m Messenger, token string) http.Handler {
 	mux.HandleFunc("GET /api/qr", requireToken(token, func(w http.ResponseWriter, r *http.Request) {
 		s := m.Status()
 		writeJSON(w, http.StatusOK, map[string]any{"code": s.QR, "paired": s.Paired, "connected": s.Connected})
+	}))
+	mux.HandleFunc("GET /api/chats", requireToken(token, func(w http.ResponseWriter, r *http.Request) {
+		query := strings.TrimSpace(r.URL.Query().Get("q"))
+		if n := utf8.RuneCountInString(query); n < 2 || n > 64 {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"chats": []Chat{}})
+			return
+		}
+		chats, err := m.Find(r.Context(), query)
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"chats": []Chat{}})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"chats": chats})
+	}))
+	mux.HandleFunc("GET /api/messages", requireToken(token, func(w http.ResponseWriter, r *http.Request) {
+		chat, err := parseRecipient(r.URL.Query().Get("chat"))
+		limit, limitErr := strconv.Atoi(r.URL.Query().Get("limit"))
+		if err != nil || limitErr != nil || limit < 1 || limit > 50 {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"messages": []Stored{}})
+			return
+		}
+		messages, err := m.Read(r.Context(), chat, limit)
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"messages": []Stored{}})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"messages": messages})
 	}))
 	mux.HandleFunc("POST /api/send", requireToken(token, func(w http.ResponseWriter, r *http.Request) {
 		var request sendRequest

@@ -79,6 +79,7 @@ What each status means to the owner:
 | `get_status` | The local configuration check | No |
 | `list_recipients` | The allowed recipients and their exact destinations | No |
 | `search_contacts` | Finds people in the owner's Telegram ([03-telegram.md](03-telegram.md#finding-and-allowing-people)) | Yes, read-only, live only |
+| `read_messages` | Reads a chat's latest messages when the owner asks ([03-telegram.md](03-telegram.md#reading-a-chat), [04-whatsapp.md](04-whatsapp.md#reading-a-chat)) | Yes, read-only, live only |
 | `allow_recipient`, `revoke_recipient` | Adds a recipient from a search result or an exact WhatsApp JID; removes one | No |
 | `prepare_message` | Creates or returns a plan, optionally with one file ([files](#files)). Sends nothing | No |
 | `get_message_status` | Reads a plan | No |

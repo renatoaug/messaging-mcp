@@ -11,7 +11,9 @@ use crate::attachment::{Kind, Outgoing};
 use crate::config::{Recipient, WhatsAppConfig, validate_bridge_url};
 use crate::error::{DeliveryError, Error, Outcome};
 use crate::identity::WHATSAPP_TOKEN_ENV;
-use crate::plan::{ChannelAdapter, Receipt};
+use crate::plan::{
+    Channel, ChannelAdapter, ChatMatch, ChatMessage, ChatTarget, MessageReader, Receipt,
+};
 use crate::secrets::{process_env, secret_from};
 
 const MAX_RESPONSE_BYTES: usize = 16_384;
@@ -41,6 +43,7 @@ fn uncertain(message: &str) -> DeliveryError {
 /// Sends through the separately managed Go bridge, over loopback HTTP, with a single attempt.
 pub struct WhatsAppAdapter {
     client: Client,
+    base_url: String,
     send_url: String,
     read_token: ReadToken,
 }
@@ -65,6 +68,7 @@ impl WhatsAppAdapter {
         Ok(Self {
             client,
             send_url: format!("{base_url}/send"),
+            base_url,
             read_token,
         })
     }
@@ -84,15 +88,8 @@ impl WhatsAppAdapter {
 }
 
 /// Reads a small response body, with the request timeout still running.
-async fn read_limited(mut response: Response) -> Option<Vec<u8>> {
-    let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await.ok()? {
-        if body.len() + chunk.len() > MAX_RESPONSE_BYTES {
-            return None;
-        }
-        body.extend_from_slice(&chunk);
-    }
-    Some(body)
+async fn read_limited(response: Response) -> Option<Vec<u8>> {
+    read_limited_to(response, MAX_RESPONSE_BYTES).await
 }
 
 fn rejected_or_uncertain(status: StatusCode) -> DeliveryError {
@@ -190,5 +187,87 @@ impl ChannelAdapter for WhatsAppAdapter {
             accepted: true,
             provider_message_id,
         })
+    }
+}
+
+fn read_failed() -> Error {
+    Error::new(
+        "WHATSAPP_READ_FAILED",
+        "The WhatsApp bridge did not return the chats or messages. Check that it is running \
+         (whatsapp_status). Nothing was sent.",
+    )
+}
+
+impl WhatsAppAdapter {
+    /// One read-only GET to the bridge, with the token, returning the JSON body.
+    async fn get(&self, path: &str, query: &[(&str, &str)]) -> Result<Value, Error> {
+        let token = self.token().map_err(|_| read_failed())?;
+        let url = url::Url::parse_with_params(&format!("{}/{path}", self.base_url), query)
+            .map_err(|_| read_failed())?;
+        let response = self
+            .client
+            .get(url)
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .send()
+            .await
+            .map_err(|_| read_failed())?;
+        if !response.status().is_success() {
+            return Err(read_failed());
+        }
+        let body = read_limited_to(response, MAX_READ_BYTES)
+            .await
+            .ok_or_else(read_failed)?;
+        serde_json::from_slice(&body).map_err(|_| read_failed())
+    }
+}
+
+/// 50 messages of up to 64 KB each, with room to spare.
+const MAX_READ_BYTES: usize = 4 * 1024 * 1024;
+
+/// Reads a body up to `max` bytes, with the request timeout still running.
+async fn read_limited_to(mut response: Response, max: usize) -> Option<Vec<u8>> {
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.ok()? {
+        if body.len() + chunk.len() > max {
+            return None;
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Some(body)
+}
+
+#[async_trait]
+impl MessageReader for WhatsAppAdapter {
+    async fn find_chats(&self, query: &str) -> Result<Vec<ChatMatch>, Error> {
+        let body = self.get("chats", &[("q", query)]).await?;
+        let chats = body
+            .get("chats")
+            .and_then(Value::as_array)
+            .ok_or_else(read_failed)?;
+        Ok(chats
+            .iter()
+            .filter_map(|chat| {
+                let jid = chat.get("jid")?.as_str()?;
+                let name = chat.get("name")?.as_str()?;
+                Some(ChatMatch {
+                    channel: Channel::Whatsapp,
+                    reference: jid.to_string(),
+                    name: crate::adapters::telegram::clean_name(name),
+                    target: ChatTarget::Whatsapp(jid.to_string()),
+                })
+            })
+            .collect())
+    }
+
+    async fn read(&self, chat: &ChatMatch, limit: i32) -> Result<Vec<ChatMessage>, Error> {
+        let ChatTarget::Whatsapp(jid) = &chat.target else {
+            return Err(read_failed());
+        };
+        let limit = limit.to_string();
+        let body = self
+            .get("messages", &[("chat", jid), ("limit", &limit)])
+            .await?;
+        let messages = body.get("messages").cloned().ok_or_else(read_failed)?;
+        serde_json::from_value(messages).map_err(|_| read_failed())
     }
 }

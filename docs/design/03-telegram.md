@@ -58,6 +58,10 @@ messaging-mcp allow telegram "Maria" --id maria
 
 From the assistant, `allow_recipient` with the result's `reference` (`user:42`) does the same, only when you asked to message that person; each live message still needs your yes. In a terminal, `allow telegram` lists the results, asks which one, shows what will be stored and asks for `ALLOW maria`. `revoke_recipient` or `messaging-mcp revoke maria` removes it; plans prepared for it stop being sendable.
 
+## Reading a chat
+
+`read_messages` with `channel: telegram` finds the chat with the same search as above, then calls `messages.getHistory` once for its last 1–50 messages. It runs in live mode only, checks the account like a send, and returns each message oldest first with who wrote it (`you` for your own), its time and its text; media becomes a label (`[photo]`, `[file]`) followed by its caption, and service messages are left out. With several matches it reads nothing and returns them; the agent asks you and calls again with the `reference`, which the server remembers from the last search. Any chat can be read, allowed or not ([ADR-012](../decisions/ADR-012-read-chats-when-the-owner-asks.md)).
+
 ## Still open
 
 - [x] A QR login and a send to Saved Messages against a real account → done on 2026-11-05.
