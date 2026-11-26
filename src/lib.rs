@@ -12,6 +12,7 @@ pub mod error;
 pub mod identity;
 pub mod mcp;
 pub mod plan;
+pub mod received;
 pub mod secrets;
 pub mod service;
 pub mod setup;

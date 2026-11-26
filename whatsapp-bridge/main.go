@@ -2,8 +2,9 @@
 // device and lets messaging-mcp send text and files through it, over HTTP on 127.0.0.1 only.
 //
 // It keeps the device session and the text of the last three days of messages (so the owner can
-// ask what someone sent), and nothing else: no stored media, no webhooks. A file is held in memory
-// only while it is sent. It never logs message contents. See docs/design/04-whatsapp.md.
+// ask what someone sent), with the keys to download their photos and files when the owner asks,
+// and nothing else: no stored media, no webhooks. A file is held in memory only while it is sent
+// or handed over. It never logs message contents. See docs/design/04-whatsapp.md.
 package main
 
 import (
@@ -76,6 +77,11 @@ func (w *whatsapp) keep(ctx context.Context, info types.MessageInfo, message *wa
 		Chat: w.chatOf(ctx, info.Chat), ID: info.ID, From: from, FromMe: info.IsFromMe,
 		At: info.Timestamp.UnixMilli(), Text: messageText(message),
 	}
+	if media := mediaOf(message); media != nil {
+		if keys, err := proto.Marshal(media); err == nil {
+			stored.Media = keys
+		}
+	}
 	if err := w.inbox.Add(ctx, stored); err != nil {
 		log.Print("could not keep a message")
 		return
@@ -130,6 +136,40 @@ func (w *whatsapp) Read(ctx context.Context, chat types.JID, limit int) ([]Store
 		return nil, errNoInbox
 	}
 	return w.inbox.Recent(ctx, chat.ToNonAD().String(), limit)
+}
+
+// Download fetches and decrypts a kept message's photo, video or document from WhatsApp's media
+// servers. errNoAttachment means there is none; errTooLarge that it is over the limit.
+func (w *whatsapp) Download(ctx context.Context, chat types.JID, id string) (*File, error) {
+	if w.inbox == nil {
+		return nil, errNoInbox
+	}
+	keys, err := w.inbox.Media(ctx, chat.ToNonAD().String(), id)
+	if err != nil {
+		return nil, err
+	}
+	if keys == nil {
+		return nil, errNoAttachment
+	}
+	var media waE2E.Message
+	if err := proto.Unmarshal(keys, &media); err != nil {
+		return nil, errNoAttachment
+	}
+	file, downloadable := describeMedia(&media, id)
+	if downloadable == nil {
+		return nil, errNoAttachment
+	}
+	if file.size > maxFileBytes {
+		return nil, errTooLarge
+	}
+	data, err := w.client.Download(ctx, downloadable)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxFileBytes {
+		return nil, errTooLarge
+	}
+	return &File{Name: file.name, Mime: file.mime, Data: data}, nil
 }
 
 func (w *whatsapp) setQR(code string) {

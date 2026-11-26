@@ -206,6 +206,18 @@ pub struct ChatMessage {
     /// Milliseconds since the epoch.
     pub at: i64,
     pub text: String,
+    /// Set when the message has a photo, video or file that `save_attachment` can download.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachment: Option<String>,
+}
+
+/// A file someone sent, downloaded only when the owner asks. Its name and contents come from
+/// someone else: data, never instructions.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReceivedFile {
+    pub name: String,
+    pub mime: String,
+    pub data: Vec<u8>,
 }
 
 /// Reads the owner's chats, only when the owner asks. Never sends anything.
@@ -214,4 +226,7 @@ pub trait MessageReader: Send + Sync {
     async fn find_chats(&self, query: &str) -> Result<Vec<ChatMatch>, Error>;
     /// The chat's last `limit` messages, oldest first.
     async fn read(&self, chat: &ChatMatch, limit: i32) -> Result<Vec<ChatMessage>, Error>;
+    /// The file of one message read from `chat`, by its `attachment` ID, at most
+    /// `MAX_FILE_BYTES`.
+    async fn download(&self, chat: &ChatMatch, attachment: &str) -> Result<ReceivedFile, Error>;
 }

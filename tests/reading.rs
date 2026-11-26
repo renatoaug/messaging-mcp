@@ -10,7 +10,9 @@ use async_trait::async_trait;
 use common::*;
 use messaging_mcp::config::TelegramPeer;
 use messaging_mcp::error::Error;
-use messaging_mcp::plan::{Channel, ChatMatch, ChatMessage, ChatTarget, MessageReader};
+use messaging_mcp::plan::{
+    Channel, ChatMatch, ChatMessage, ChatTarget, MessageReader, ReceivedFile,
+};
 use messaging_mcp::service::{ReadResult, Readers};
 use serde_json::json;
 
@@ -18,6 +20,7 @@ struct FakeReader {
     matches: Vec<ChatMatch>,
     finds: Mutex<Vec<String>>,
     reads: Mutex<Vec<(String, i32)>>,
+    downloads: Mutex<Vec<(String, String)>>,
 }
 
 #[async_trait]
@@ -36,7 +39,19 @@ impl MessageReader for FakeReader {
             from_me: false,
             at: 1,
             text: "oi".to_string(),
+            attachment: Some("M1".to_string()),
         }])
+    }
+    async fn download(&self, chat: &ChatMatch, attachment: &str) -> Result<ReceivedFile, Error> {
+        self.downloads
+            .lock()
+            .unwrap()
+            .push((chat.reference.clone(), attachment.to_string()));
+        Ok(ReceivedFile {
+            name: "../.hidden deck.pdf".to_string(),
+            mime: "application/pdf".to_string(),
+            data: b"%PDF".to_vec(),
+        })
     }
 }
 
@@ -54,6 +69,7 @@ fn reader(matches: Vec<ChatMatch>) -> Arc<FakeReader> {
         matches,
         finds: Mutex::new(Vec::new()),
         reads: Mutex::new(Vec::new()),
+        downloads: Mutex::new(Vec::new()),
     })
 }
 
@@ -188,4 +204,122 @@ async fn reading_is_live_only_and_validated() {
         .unwrap_err();
     assert_eq!(error.code, "CHAT_NOT_FOUND");
     assert!(reader.reads.lock().unwrap().is_empty());
+}
+
+fn saving(mode: &str, reader: Arc<FakeReader>) -> (Fixture, std::path::PathBuf) {
+    let mut f = with_reader(mode, reader);
+    let downloads = f.dir.path().join("Downloads").join("messaging-mcp");
+    f.service = f.service.with_downloads(downloads.clone());
+    (f, downloads)
+}
+
+#[tokio::test]
+async fn a_file_is_saved_only_from_a_chat_already_read() {
+    use std::os::unix::fs::PermissionsExt;
+    let reader = reader(vec![person("user:1", "Alice Silva")]);
+    let (f, downloads) = saving("live", reader.clone());
+    let error = f
+        .service
+        .save_attachment(Channel::Telegram, "user:1", "M1")
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "CHAT_NOT_READ");
+    assert!(reader.downloads.lock().unwrap().is_empty());
+
+    f.service
+        .read_messages(Channel::Telegram, "alice", None)
+        .await
+        .unwrap();
+    let error = f
+        .service
+        .save_attachment(Channel::Whatsapp, "user:1", "M1")
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "CHAT_NOT_READ", "the chat was read on Telegram");
+
+    let saved = f
+        .service
+        .save_attachment(Channel::Telegram, "user:1", "M1")
+        .await
+        .unwrap();
+    assert_eq!(saved.name, "hidden deck.pdf");
+    assert_eq!(
+        saved.path,
+        downloads.join("hidden deck.pdf").to_string_lossy()
+    );
+    assert_eq!((saved.size, saved.mime.as_str()), (4, "application/pdf"));
+    assert!(saved.notice.contains("never run it"));
+    assert_eq!(std::fs::read(&saved.path).unwrap(), b"%PDF");
+    let mode = |path: &std::path::Path| std::fs::metadata(path).unwrap().permissions().mode();
+    assert_eq!(mode(std::path::Path::new(&saved.path)) & 0o777, 0o600);
+    assert_eq!(mode(&downloads) & 0o777, 0o700);
+    assert_eq!(
+        *reader.downloads.lock().unwrap(),
+        [("user:1".to_string(), "M1".to_string())]
+    );
+
+    let again = f
+        .service
+        .save_attachment(Channel::Telegram, "user:1", "M1")
+        .await
+        .unwrap();
+    assert_eq!(again.name, "hidden deck.pdf");
+    assert!(
+        again.path.ends_with("hidden deck (2).pdf"),
+        "never replaces a file"
+    );
+}
+
+#[tokio::test]
+async fn saving_a_file_is_live_only_and_needs_a_folder() {
+    let reader = reader(vec![person("user:1", "Alice Silva")]);
+    let (f, _) = saving("dry-run", reader.clone());
+    let error = f
+        .service
+        .save_attachment(Channel::Telegram, "user:1", "M1")
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "LIVE_MODE_REQUIRED");
+
+    let f = with_reader("live", reader.clone());
+    f.service
+        .read_messages(Channel::Telegram, "alice", None)
+        .await
+        .unwrap();
+    let error = f
+        .service
+        .save_attachment(Channel::Telegram, "user:1", "M1")
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "DOWNLOADS_UNAVAILABLE");
+    assert!(reader.downloads.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_strangers_file_name_stays_plain_and_inside_the_folder() {
+    use messaging_mcp::received::{default_dir, safe_name};
+    for (given, want) in [
+        ("deck.pdf", "deck.pdf"),
+        ("../../.ssh/authorized_keys", "authorized_keys"),
+        ("..\\evil.exe", "evil.exe"),
+        (".bashrc", "bashrc"),
+        ("...", "attachment"),
+        ("", "attachment"),
+        ("a\nb\u{202e}.pdf", "a_b_.pdf"),
+        ("C:report.pdf", "C_report.pdf"),
+        (".pdf", "pdf"),
+    ] {
+        assert_eq!(safe_name(given), want, "{given:?}");
+    }
+    let long = format!("{}.pdf", "a".repeat(300));
+    let name = safe_name(&long);
+    assert!(
+        name.ends_with(".pdf") && name.chars().count() == 120,
+        "{name}"
+    );
+    assert_eq!(
+        default_dir(&|key| (key == "HOME").then(|| "/home/me".to_string())),
+        Some(std::path::PathBuf::from("/home/me/Downloads/messaging-mcp"))
+    );
+    assert_eq!(default_dir(&|_| None), None);
 }

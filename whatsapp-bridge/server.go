@@ -28,6 +28,16 @@ const (
 	fileSendTimeout = 5 * time.Minute
 )
 
+// errNoAttachment means the message has no file to download, or is no longer kept; errTooLarge
+// that its file is over maxFileBytes.
+var (
+	errNoAttachment = errors.New("no attachment")
+	errTooLarge     = errors.New("too large")
+)
+
+// downloadTimeout bounds downloading one file of up to 50 MB.
+const downloadTimeout = 5 * time.Minute
+
 // errUploadFailed means the file never reached WhatsApp's media servers, so no message was sent.
 var errUploadFailed = errors.New("upload failed")
 
@@ -65,6 +75,21 @@ type Messenger interface {
 	Find(ctx context.Context, query string) ([]Chat, error)
 	// Read returns a chat's messages from the last three days, oldest first.
 	Read(ctx context.Context, chat types.JID, limit int) ([]Stored, error)
+	// Download returns the photo, video or document of a kept message.
+	Download(ctx context.Context, chat types.JID, id string) (*File, error)
+}
+
+// validMessageID accepts WhatsApp's message IDs: letters and digits only.
+func validMessageID(id string) bool {
+	if id == "" || len(id) > 128 {
+		return false
+	}
+	for _, r := range id {
+		if !(r >= '0' && r <= '9' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z') {
+			return false
+		}
+	}
+	return true
 }
 
 type fileRequest struct {
@@ -136,7 +161,7 @@ func parseRecipient(value string) (types.JID, error) {
 	return jid, nil
 }
 
-// newHandler serves the three routes messaging-mcp uses. Status codes carry what is known about a
+// newHandler serves the routes messaging-mcp uses. Status codes carry what is known about a
 // send: 400, 401, 409 and 422 (the file upload failed) mean nothing was sent; any other failure
 // may have been sent.
 func newHandler(m Messenger, token string) http.Handler {
@@ -179,6 +204,31 @@ func newHandler(m Messenger, token string) http.Handler {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"messages": messages})
+	}))
+	mux.HandleFunc("GET /api/attachment", requireToken(token, func(w http.ResponseWriter, r *http.Request) {
+		chat, err := parseRecipient(r.URL.Query().Get("chat"))
+		id := r.URL.Query().Get("id")
+		if err != nil || !validMessageID(id) {
+			writeJSON(w, http.StatusBadRequest, map[string]any{})
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), downloadTimeout)
+		defer cancel()
+		file, err := m.Download(ctx, chat, id)
+		switch {
+		case errors.Is(err, errNoAttachment):
+			writeJSON(w, http.StatusNotFound, map[string]any{})
+			return
+		case errors.Is(err, errTooLarge):
+			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{})
+			return
+		case err != nil:
+			writeJSON(w, http.StatusBadGateway, map[string]any{})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"name": file.Name, "mime": file.Mime, "data": base64.StdEncoding.EncodeToString(file.Data),
+		})
 	}))
 	mux.HandleFunc("POST /api/send", requireToken(token, func(w http.ResponseWriter, r *http.Request) {
 		var request sendRequest

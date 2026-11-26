@@ -12,7 +12,7 @@ use messaging_mcp::adapters::telegram::{
     messages_from_history, receipt_from, rejection, send_media_request, send_request,
     telegram_random_id, upload_parts, uploaded_file,
 };
-use messaging_mcp::adapters::telegram::{ReadMessage, Voice};
+use messaging_mcp::adapters::telegram::{MediaFile, ReadMessage, Voice, message_request};
 use messaging_mcp::adapters::whatsapp::WhatsAppAdapter;
 use messaging_mcp::attachment::{Kind, Outgoing, OutgoingFile};
 use messaging_mcp::config::{Recipient, TelegramPeer, WhatsAppConfig};
@@ -231,14 +231,19 @@ impl TelegramTransport for FakeTransport {
             from_me: false,
             at: 1,
             text: text.to_string(),
+            attachment: None,
         };
         Ok(vec![
             ReadMessage {
+                id: 1,
                 message: message("oi"),
                 voice: None,
+                file: None,
                 caption: String::new(),
             },
             ReadMessage {
+                id: 2,
+                file: None,
                 message: message("[audio 0:42] (not transcribed)"),
                 voice: Some(Voice {
                     id: 77,
@@ -261,6 +266,47 @@ impl TelegramTransport for FakeTransport {
         self.events.0.lock().unwrap().push("download");
         assert_eq!(voice.id, 77);
         Ok(b"opus bytes".to_vec())
+    }
+    async fn message(
+        &self,
+        target: &TelegramPeer,
+        chat_name: &str,
+        id: i32,
+    ) -> Result<Option<ReadMessage>, TransportError> {
+        self.events.0.lock().unwrap().push("message");
+        assert_eq!(target, &TelegramPeer::Myself);
+        // Like Telegram, an ID with no message answers the next older one.
+        let size = if id == 9 { 60 * 1024 * 1024 } else { 4 };
+        Ok(Some(ReadMessage {
+            id: if id == 8 { 7 } else { id },
+            message: ChatMessage {
+                from: chat_name.to_string(),
+                from_me: false,
+                at: 1,
+                text: "[file] deck".to_string(),
+                attachment: Some(id.to_string()),
+            },
+            voice: None,
+            file: (id != 6).then(|| MediaFile {
+                location: tl::types::InputDocumentFileLocation {
+                    id: 5,
+                    access_hash: 1,
+                    file_reference: vec![],
+                    thumb_size: String::new(),
+                }
+                .into(),
+                size,
+                dc_id: 1,
+                name: "deck.pdf".to_string(),
+                mime: "application/pdf".to_string(),
+            }),
+            caption: String::new(),
+        }))
+    }
+    async fn download_file(&self, file: &MediaFile) -> Result<Vec<u8>, TransportError> {
+        self.events.0.lock().unwrap().push("download_file");
+        assert_eq!(file.name, "deck.pdf");
+        Ok(b"%PDF".to_vec())
     }
     async fn close(&self) -> Result<(), TransportError> {
         self.events.0.lock().unwrap().push("close");
@@ -778,7 +824,8 @@ async fn whatsapp_finds_and_reads_chats_with_the_token() {
             from: "Alice".to_string(),
             from_me: false,
             at: 5,
-            text: "oi".to_string()
+            text: "oi".to_string(),
+            attachment: None,
         }]
     );
     let request = requests.lock().unwrap()[0].to_lowercase();
@@ -860,4 +907,93 @@ fn fake_transcriber(dir: &std::path::Path, text: &str) -> messaging_mcp::transcr
         language: "pt".to_string(),
         work_dir: work,
     }
+}
+
+#[tokio::test]
+async fn telegram_downloads_a_file_from_a_fresh_copy_of_the_message() {
+    let (adapter, events, sends) = telegram(READY, 1000);
+    let chat = ChatMatch {
+        channel: Channel::Telegram,
+        reference: "self".to_string(),
+        name: "Alice".to_string(),
+        target: ChatTarget::Telegram(TelegramPeer::Myself),
+    };
+    let file = adapter.download(&chat, "5").await.unwrap();
+    assert_eq!(
+        (file.name.as_str(), file.mime.as_str(), file.data.as_slice()),
+        ("deck.pdf", "application/pdf", b"%PDF".as_slice())
+    );
+    assert_eq!(
+        *events.0.lock().unwrap(),
+        ["authorized", "message", "download_file", "close"]
+    );
+    for (id, code) in [
+        ("6", "ATTACHMENT_NOT_FOUND"),
+        ("8", "ATTACHMENT_NOT_FOUND"),
+        ("9", "ATTACHMENT_TOO_LARGE"),
+        ("x", "ATTACHMENT_NOT_FOUND"),
+        ("-1", "ATTACHMENT_NOT_FOUND"),
+    ] {
+        assert_eq!(
+            adapter.download(&chat, id).await.unwrap_err().code,
+            code,
+            "{id}"
+        );
+    }
+    assert_eq!(sends.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn one_message_is_asked_for_by_its_id() {
+    let request = message_request(tl::types::InputPeerSelf {}.into(), 41);
+    assert_eq!((request.offset_id, request.limit), (42, 1));
+}
+
+#[tokio::test]
+async fn whatsapp_downloads_an_attachment_with_the_token() {
+    let body = r#"{"name":"deck.pdf","mime":"application/pdf","data":"JVBERg=="}"#;
+    let (url, requests) = bridge(Some(http("200 OK", body))).await;
+    let chat = ChatMatch {
+        channel: Channel::Whatsapp,
+        reference: "5511988887777@s.whatsapp.net".to_string(),
+        name: "Alice".to_string(),
+        target: ChatTarget::Whatsapp("5511988887777@s.whatsapp.net".to_string()),
+    };
+    let file = adapter(url, Ok(TOKEN.to_string()))
+        .download(&chat, "3EB0ABC")
+        .await
+        .unwrap();
+    assert_eq!(
+        (file.name.as_str(), file.data.as_slice()),
+        ("deck.pdf", b"%PDF".as_slice())
+    );
+    let request = requests.lock().unwrap()[0].to_lowercase();
+    assert!(
+        request.starts_with(
+            "get /api/attachment?chat=5511988887777%40s.whatsapp.net&id=3eb0abc http/1.1"
+        ),
+        "{request}"
+    );
+    assert!(request.contains(&format!("authorization: bearer {TOKEN}")));
+
+    for (status, code) in [
+        ("404 Not Found", "ATTACHMENT_NOT_FOUND"),
+        ("413 Payload Too Large", "ATTACHMENT_TOO_LARGE"),
+        ("502 Bad Gateway", "WHATSAPP_DOWNLOAD_FAILED"),
+        ("200 OK", "WHATSAPP_DOWNLOAD_FAILED"),
+    ] {
+        let (url, _) = bridge(Some(http(status, "{}"))).await;
+        let error = adapter(url, Ok(TOKEN.to_string()))
+            .download(&chat, "3EB0ABC")
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, code, "{status}");
+    }
+    let (url, requests) = bridge(Some(http("200 OK", body))).await;
+    let error = adapter(url, Ok(TOKEN.to_string()))
+        .download(&chat, "../x")
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "ATTACHMENT_NOT_FOUND");
+    assert!(requests.lock().unwrap().is_empty());
 }

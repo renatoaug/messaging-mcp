@@ -20,6 +20,16 @@ type fakeMessenger struct {
 	queries  []string
 	read     []string
 	messages []Stored
+	file     *File
+	fetched  []string
+}
+
+func (f *fakeMessenger) Download(_ context.Context, chat types.JID, id string) (*File, error) {
+	f.fetched = append(f.fetched, chat.String()+"|"+id)
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.file, nil
 }
 
 func (f *fakeMessenger) Find(_ context.Context, query string) ([]Chat, error) {
@@ -73,7 +83,7 @@ func connected() *fakeMessenger {
 
 func TestEveryRouteRequiresTheToken(t *testing.T) {
 	h := newHandler(connected(), token)
-	for _, route := range [][2]string{{"GET", "/api/health"}, {"GET", "/api/qr"}, {"POST", "/api/send"}, {"GET", "/api/chats?q=alice"}, {"GET", "/api/messages?chat=5511988887777@s.whatsapp.net&limit=5"}} {
+	for _, route := range [][2]string{{"GET", "/api/health"}, {"GET", "/api/qr"}, {"POST", "/api/send"}, {"GET", "/api/chats?q=alice"}, {"GET", "/api/messages?chat=5511988887777@s.whatsapp.net&limit=5"}, {"GET", "/api/attachment?chat=5511988887777@s.whatsapp.net&id=ABC"}} {
 		for _, auth := range []string{"", "Bearer wrong", token} {
 			if code, _ := request(t, h, route[0], route[1], auth, "{}"); code != http.StatusUnauthorized {
 				t.Fatalf("%s %s with %q: got %d", route[0], route[1], auth, code)
@@ -229,6 +239,35 @@ func TestMessagesAreReadFromOneChat(t *testing.T) {
 	for _, query := range []string{"chat=alice&limit=5", "chat=5511988887777@s.whatsapp.net&limit=0", "chat=5511988887777@s.whatsapp.net&limit=51", "chat=5511988887777@s.whatsapp.net"} {
 		if code, _ := request(t, newHandler(m, token), "GET", "/api/messages?"+query, "Bearer "+token, ""); code != http.StatusBadRequest {
 			t.Fatalf("%s: got %d", query, code)
+		}
+	}
+}
+
+func TestAnAttachmentIsHandedOverWithItsName(t *testing.T) {
+	m := connected()
+	m.file = &File{Name: "deck.pdf", Mime: "application/pdf", Data: []byte("%PDF")}
+	code, body := request(t, newHandler(m, token), "GET", "/api/attachment?chat=5511988887777@s.whatsapp.net&id=3EB0ABC", "Bearer "+token, "")
+	data, _ := base64.StdEncoding.DecodeString(body["data"].(string))
+	if code != http.StatusOK || body["name"] != "deck.pdf" || body["mime"] != "application/pdf" || string(data) != "%PDF" {
+		t.Fatalf("got %d %v", code, body)
+	}
+	if len(m.fetched) != 1 || m.fetched[0] != "5511988887777@s.whatsapp.net|3EB0ABC" {
+		t.Fatalf("fetched %v", m.fetched)
+	}
+}
+
+func TestAttachmentRequestsAreCheckedAndFailuresTold(t *testing.T) {
+	for _, query := range []string{"chat=5511988887777@s.whatsapp.net&id=", "chat=5511988887777@s.whatsapp.net&id=../x", "chat=alice&id=ABC", "id=ABC"} {
+		m := connected()
+		if code, _ := request(t, newHandler(m, token), "GET", "/api/attachment?"+query, "Bearer "+token, ""); code != http.StatusBadRequest || len(m.fetched) != 0 {
+			t.Fatalf("%s: got %d", query, code)
+		}
+	}
+	for err, want := range map[error]int{errNoAttachment: http.StatusNotFound, errTooLarge: http.StatusRequestEntityTooLarge, errors.New("x"): http.StatusBadGateway} {
+		m := connected()
+		m.err = err
+		if code, _ := request(t, newHandler(m, token), "GET", "/api/attachment?chat=5511988887777@s.whatsapp.net&id=ABC", "Bearer "+token, ""); code != want {
+			t.Fatalf("%v: got %d, want %d", err, code, want)
 		}
 	}
 }
