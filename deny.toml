@@ -4,6 +4,11 @@
 [advisories]
 version = 2
 yanked = "deny"
+ignore = [
+    # chrono is unmaintained, with no replacement yet. The official MCP SDK (rmcp) and schemars
+    # require it; it is not a vulnerability. Remove once they drop it.
+    { id = "RUSTSEC-2026-0543", reason = "required by rmcp and schemars; unmaintained, not vulnerable" },
+]
 
 [licenses]
 version = 2

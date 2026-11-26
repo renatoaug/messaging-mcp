@@ -60,3 +60,15 @@ GET /api/messages?chat=<JID>&limit=20        → 200 {"messages": [{"from": "Ali
 ```
 
 `/api/chats` matches 2–64 characters, ignoring case and accents, against the account's contacts, its groups and the names in stored messages, up to 20. `/api/messages` returns the last 1–50 messages, oldest first. `read_messages` with `channel: whatsapp` calls them; a phone number is read directly.
+
+## Saving a file
+
+For a photo, video or document (also inside a disappearing message or a document with a caption), the bridge also keeps the message's media keys (its `waE2E` message: location, media key, hashes, size), never the file, in the same row and for the same 3 days. Such a message comes back from `/api/messages` with `"attachment": "<message ID>"` ([ADR-014](../decisions/ADR-014-save-received-files-when-asked.md)).
+
+```text
+GET /api/attachment?chat=<JID>&id=<message ID>   → 200 {"name": "deck.pdf", "mime": "application/pdf", "data": "<base64>"}
+```
+
+The bridge downloads and decrypts the file from WhatsApp's media servers within 5 minutes and hands it over in memory. 404 means the message has no file or is no longer kept, 413 that it is over 50 MB, 502 that WhatsApp did not return it (its copy may have expired). A document keeps its name; a photo or video is named `photo-<id>.jpg` or `video-<id>.mp4`.
+
+`save_attachment` works only for a chat read in this session, live only. messaging-mcp turns the name into a plain file name (no folders, no leading dot, no control or direction characters, at most 120 characters) and writes the file to `~/Downloads/messaging-mcp/` (0700) as a new 0600 file, adding ` (2)`, ` (3)` when the name is taken. It answers the path, name, size, type and SHA-256, with a notice that the contents are data. Messages kept before this version have no keys, so their files cannot be saved.

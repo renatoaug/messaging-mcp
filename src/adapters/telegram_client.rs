@@ -15,8 +15,9 @@ use tokio::task::JoinHandle;
 
 use crate::adapters::telegram::{
     StoredSession, TelegramTransport, TransportError, UploadPart, contacts_from_address_book,
-    contacts_from_found, history_request, input_peer, messages_from_history, read_credentials,
-    receipt_from, rejection, send_media_request, send_request, upload_parts, uploaded_file,
+    contacts_from_found, history_request, input_peer, message_request, messages_from_history,
+    read_credentials, receipt_from, rejection, send_media_request, send_request, upload_parts,
+    uploaded_file,
 };
 
 /// A refusal Telegram answered becomes "not sent"; anything else stays uncertain.
@@ -27,25 +28,30 @@ fn classify(error: InvocationError) -> TransportError {
         _ => TransportError::Failed,
     }
 }
-use crate::adapters::telegram::{ReadMessage, Voice};
+use crate::adapters::telegram::{MediaFile, ReadMessage, Voice};
+use crate::attachment::MAX_FILE_BYTES;
 use crate::config::{TelegramConfig, TelegramPeer};
 use crate::error::{DeliveryError, Error, Outcome};
 use crate::identity::TELEGRAM_SESSION_ENV;
 use crate::plan::{Contact, Receipt};
 use crate::transcribe::MAX_AUDIO_BYTES;
 
-/// A voice message as grammers downloads it: its location, size and datacenter.
-struct VoiceFile<'a>(&'a Voice);
+/// A voice message or file as grammers downloads it: its location, size and datacenter.
+struct Located {
+    location: tl::enums::InputFileLocation,
+    size: i64,
+    dc_id: i32,
+}
 
-impl grammers_client::media::Downloadable for VoiceFile<'_> {
+impl grammers_client::media::Downloadable for Located {
     fn to_raw_input_location(&self) -> Option<tl::enums::InputFileLocation> {
-        Some(self.0.location.clone())
+        Some(self.location.clone())
     }
     fn size(&self) -> Option<usize> {
-        usize::try_from(self.0.size).ok()
+        usize::try_from(self.size).ok()
     }
     fn dc_id(&self) -> Option<i32> {
-        Some(self.0.dc_id)
+        Some(self.dc_id)
     }
 }
 use crate::secrets::{process_env, secret_from};
@@ -140,6 +146,19 @@ impl GrammersTransport {
             runner,
             expected_user_id,
         })
+    }
+
+    /// Downloads a file, stopping as soon as it grows past `max`.
+    async fn fetch(&self, file: &Located, max: usize) -> Result<Vec<u8>, TransportError> {
+        let mut chunks = self.client.iter_download(file);
+        let mut data = Vec::new();
+        while let Some(chunk) = chunks.next().await.map_err(|_| TransportError::Failed)? {
+            data.extend_from_slice(&chunk);
+            if data.len() > max {
+                return Err(TransportError::Failed);
+            }
+        }
+        Ok(data)
     }
 }
 
@@ -272,15 +291,37 @@ impl TelegramTransport for GrammersTransport {
     }
 
     async fn download(&self, voice: &Voice) -> Result<Vec<u8>, TransportError> {
-        let mut chunks = self.client.iter_download(&VoiceFile(voice));
-        let mut audio = Vec::new();
-        while let Some(chunk) = chunks.next().await.map_err(|_| TransportError::Failed)? {
-            audio.extend_from_slice(&chunk);
-            if audio.len() > MAX_AUDIO_BYTES {
-                return Err(TransportError::Failed);
-            }
-        }
-        Ok(audio)
+        let file = Located {
+            location: voice.location.clone(),
+            size: voice.size,
+            dc_id: voice.dc_id,
+        };
+        self.fetch(&file, MAX_AUDIO_BYTES).await
+    }
+
+    async fn message(
+        &self,
+        target: &TelegramPeer,
+        chat_name: &str,
+        id: i32,
+    ) -> Result<Option<ReadMessage>, TransportError> {
+        let peer = input_peer(target).ok_or(TransportError::Failed)?;
+        let history = self
+            .client
+            .invoke(&message_request(peer, id))
+            .await
+            .map_err(|_| TransportError::Failed)?;
+        Ok(messages_from_history(&history, chat_name).pop())
+    }
+
+    async fn download_file(&self, file: &MediaFile) -> Result<Vec<u8>, TransportError> {
+        let file = Located {
+            location: file.location.clone(),
+            size: file.size,
+            dc_id: file.dc_id,
+        };
+        let max = usize::try_from(MAX_FILE_BYTES).map_err(|_| TransportError::Failed)?;
+        self.fetch(&file, max).await
     }
 
     async fn close(&self) -> Result<(), TransportError> {

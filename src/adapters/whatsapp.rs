@@ -7,12 +7,13 @@ use serde_json::{Value, json};
 
 use base64::Engine;
 
-use crate::attachment::{Kind, Outgoing};
+use crate::attachment::{Kind, MAX_FILE_BYTES, Outgoing};
 use crate::config::{Recipient, WhatsAppConfig, validate_bridge_url};
 use crate::error::{DeliveryError, Error, Outcome};
 use crate::identity::WHATSAPP_TOKEN_ENV;
 use crate::plan::{
     Channel, ChannelAdapter, ChatMatch, ChatMessage, ChatTarget, MessageReader, Receipt,
+    ReceivedFile,
 };
 use crate::secrets::{process_env, secret_from};
 
@@ -270,4 +271,72 @@ impl MessageReader for WhatsAppAdapter {
         let messages = body.get("messages").cloned().ok_or_else(read_failed)?;
         serde_json::from_value(messages).map_err(|_| read_failed())
     }
+    async fn download(&self, chat: &ChatMatch, attachment: &str) -> Result<ReceivedFile, Error> {
+        let ChatTarget::Whatsapp(jid) = &chat.target else {
+            return Err(download_failed());
+        };
+        let valid = !attachment.is_empty()
+            && attachment.len() <= 128
+            && attachment.bytes().all(|b| b.is_ascii_alphanumeric());
+        if !valid {
+            return Err(attachment_not_found());
+        }
+        let token = self.token().map_err(|_| download_failed())?;
+        let url = url::Url::parse_with_params(
+            &format!("{}/attachment", self.base_url),
+            &[("chat", jid.as_str()), ("id", attachment)],
+        )
+        .map_err(|_| download_failed())?;
+        let response = self
+            .client
+            .get(url)
+            .timeout(FILE_TIMEOUT)
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .send()
+            .await
+            .map_err(|_| download_failed())?;
+        match response.status() {
+            StatusCode::NOT_FOUND => return Err(attachment_not_found()),
+            StatusCode::PAYLOAD_TOO_LARGE => return Err(crate::adapters::telegram::too_big()),
+            status if !status.is_success() => return Err(download_failed()),
+            _ => {}
+        }
+        let body = read_limited_to(response, MAX_DOWNLOAD_BYTES)
+            .await
+            .ok_or_else(download_failed)?;
+        received_file(&body).ok_or_else(download_failed)
+    }
+}
+
+/// A file in base64 inside JSON, with room for the name.
+const MAX_DOWNLOAD_BYTES: usize = 70 * 1024 * 1024;
+
+/// The bridge's `/api/attachment` answer as a file, or `None` when it is malformed or too big.
+pub fn received_file(body: &[u8]) -> Option<ReceivedFile> {
+    let body: Value = serde_json::from_slice(body).ok()?;
+    let name = body.get("name")?.as_str()?.to_string();
+    let mime = body.get("mime")?.as_str()?.to_string();
+    let data = base64::engine::general_purpose::STANDARD
+        .decode(body.get("data")?.as_str()?)
+        .ok()?;
+    if data.is_empty() || data.len() as u64 > MAX_FILE_BYTES {
+        return None;
+    }
+    Some(ReceivedFile { name, mime, data })
+}
+
+fn download_failed() -> Error {
+    Error::new(
+        "WHATSAPP_DOWNLOAD_FAILED",
+        "WhatsApp did not return the file. It may have expired on WhatsApp's servers; open it on \
+         the phone. Nothing was sent.",
+    )
+}
+
+fn attachment_not_found() -> Error {
+    Error::new(
+        "ATTACHMENT_NOT_FOUND",
+        "That message has no file to save, or it is older than 3 days. Read the chat again and \
+         use an attachment ID from the answer.",
+    )
 }

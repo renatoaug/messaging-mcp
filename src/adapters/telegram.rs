@@ -12,13 +12,13 @@ use serde::{Deserialize, Serialize};
 use tokio::time::timeout;
 
 use crate::adapters::telegram_client;
-use crate::attachment::{Kind, Outgoing, OutgoingFile};
+use crate::attachment::{Kind, MAX_FILE_BYTES, Outgoing, OutgoingFile};
 use crate::config::{Recipient, TelegramConfig, TelegramPeer};
 use crate::error::{DeliveryError, Error, Outcome};
 use crate::identity::{TELEGRAM_API_HASH_ENV, TELEGRAM_API_ID_ENV};
 use crate::plan::{
     Channel, ChannelAdapter, ChatMatch, ChatMessage, ChatTarget, Contact, ContactDirectory,
-    MessageReader, Receipt,
+    MessageReader, Receipt, ReceivedFile,
 };
 use crate::secrets::{Env, secret_from};
 use crate::service::sha256_hex;
@@ -33,6 +33,8 @@ const MEDIA_SEND_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_VOICES: usize = 10;
 /// Downloading one voice message.
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(60);
+/// Downloading one photo or file of up to 50 MB.
+const FILE_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(300);
 /// Telegram's part size for uploads (it accepts up to 512 KB per part).
 pub const UPLOAD_PART_BYTES: usize = 512 * 1024;
 /// Files above this go through the big file upload.
@@ -72,6 +74,15 @@ pub trait TelegramTransport: Send + Sync {
     ) -> Result<Vec<ReadMessage>, TransportError>;
     /// Downloads a voice message, at most `MAX_AUDIO_BYTES`. Read only.
     async fn download(&self, voice: &Voice) -> Result<Vec<u8>, TransportError>;
+    /// One message of the chat by its ID, read again so its file reference is fresh. Read only.
+    async fn message(
+        &self,
+        target: &TelegramPeer,
+        chat_name: &str,
+        id: i32,
+    ) -> Result<Option<ReadMessage>, TransportError>;
+    /// Downloads a photo or file, at most `MAX_FILE_BYTES`. Read only.
+    async fn download_file(&self, file: &MediaFile) -> Result<Vec<u8>, TransportError>;
     async fn close(&self) -> Result<(), TransportError>;
 }
 
@@ -397,6 +408,67 @@ impl MessageReader for TelegramAdapter {
         close(transport.as_ref()).await;
         Ok(read.into_iter().map(|read| read.message).collect())
     }
+
+    async fn download(&self, chat: &ChatMatch, attachment: &str) -> Result<ReceivedFile, Error> {
+        let failed = || {
+            Error::new(
+                "TELEGRAM_DOWNLOAD_FAILED",
+                "Telegram did not return the file. Nothing was sent.",
+            )
+        };
+        let not_found = || {
+            Error::new(
+                "ATTACHMENT_NOT_FOUND",
+                "That message has no file to save. Read the chat again and use an attachment \
+                 ID from the answer.",
+            )
+        };
+        let ChatTarget::Telegram(peer) = &chat.target else {
+            return Err(failed());
+        };
+        let id: i32 = attachment
+            .parse()
+            .ok()
+            .filter(|id| *id > 0)
+            .ok_or_else(not_found)?;
+        let transport = self
+            .open()
+            .await
+            .map_err(|error| Error::new(error.code, error.message))?;
+        let result = async {
+            let found = timeout(self.timeout, transport.message(peer, &chat.name, id))
+                .await
+                .map_err(|_| failed())?
+                .map_err(|_| failed())?;
+            let file = found
+                .filter(|found| found.id == id)
+                .and_then(|found| found.file)
+                .ok_or_else(not_found)?;
+            if u64::try_from(file.size).map_or(true, |size| size > MAX_FILE_BYTES) {
+                return Err(too_big());
+            }
+            let data = timeout(FILE_DOWNLOAD_TIMEOUT, transport.download_file(&file))
+                .await
+                .map_err(|_| failed())?
+                .map_err(|_| failed())?;
+            Ok(ReceivedFile {
+                name: file.name,
+                mime: file.mime,
+                data,
+            })
+        }
+        .await;
+        close(transport.as_ref()).await;
+        result
+    }
+}
+
+/// A received file over the limit is not downloaded.
+pub fn too_big() -> Error {
+    Error::new(
+        "ATTACHMENT_TOO_LARGE",
+        "The file is larger than 50 MB, so it was not saved. Open it in the app.",
+    )
 }
 
 /// What is kept in the session file: the authorization keys and the home datacenter.
@@ -641,6 +713,15 @@ pub fn send_media_request(
     }
 }
 
+/// The request for one message by its ID: the first message older than `id + 1`.
+pub fn message_request(peer: tl::enums::InputPeer, id: i32) -> tl::functions::messages::GetHistory {
+    tl::functions::messages::GetHistory {
+        offset_id: id.saturating_add(1),
+        limit: 1,
+        ..history_request(peer, 1)
+    }
+}
+
 /// The request for a chat's last messages: the newest `limit`, with no offset.
 pub fn history_request(
     peer: tl::enums::InputPeer,
@@ -680,11 +761,23 @@ pub struct Voice {
     pub seconds: Option<u32>,
 }
 
-/// A message read from a chat, with its voice message when it has one.
+/// A photo or file to download when the owner asks.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MediaFile {
+    pub location: tl::enums::InputFileLocation,
+    pub size: i64,
+    pub dc_id: i32,
+    pub name: String,
+    pub mime: String,
+}
+
+/// A message read from a chat, with its voice message or file when it has one.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ReadMessage {
+    pub id: i32,
     pub message: ChatMessage,
     pub voice: Option<Voice>,
+    pub file: Option<MediaFile>,
     /// The caption that goes after the transcript.
     pub caption: String,
 }
@@ -721,6 +814,97 @@ pub fn voice_of(media: &tl::enums::MessageMedia) -> Option<Voice> {
         dc_id: document.dc_id,
         seconds: seconds.flatten(),
     })
+}
+
+/// The extension for a file Telegram gave no name.
+fn extension(mime: &str) -> &'static str {
+    match mime {
+        "image/jpeg" => ".jpg",
+        "image/png" => ".png",
+        "image/webp" => ".webp",
+        "image/gif" => ".gif",
+        "video/mp4" => ".mp4",
+        "video/quicktime" => ".mov",
+        "application/pdf" => ".pdf",
+        "audio/ogg" => ".ogg",
+        "audio/mpeg" => ".mp3",
+        _ => "",
+    }
+}
+
+/// The photo (its largest size) or the file in a message's media, if any. Stickers, voice
+/// messages and other media are left out.
+pub fn file_of(media: &tl::enums::MessageMedia) -> Option<MediaFile> {
+    match media {
+        tl::enums::MessageMedia::Photo(media) => {
+            let Some(tl::enums::Photo::Photo(photo)) = &media.photo else {
+                return None;
+            };
+            let (kind, size) = photo
+                .sizes
+                .iter()
+                .filter_map(|size| match size {
+                    tl::enums::PhotoSize::Size(s) => Some((s.r#type.clone(), s.w * s.h, s.size)),
+                    tl::enums::PhotoSize::Progressive(s) => {
+                        Some((s.r#type.clone(), s.w * s.h, *s.sizes.iter().max()?))
+                    }
+                    _ => None,
+                })
+                .max_by_key(|(_, area, _)| *area)
+                .map(|(kind, _, size)| (kind, size))?;
+            Some(MediaFile {
+                location: tl::types::InputPhotoFileLocation {
+                    id: photo.id,
+                    access_hash: photo.access_hash,
+                    file_reference: photo.file_reference.clone(),
+                    thumb_size: kind,
+                }
+                .into(),
+                size: i64::from(size),
+                dc_id: photo.dc_id,
+                name: format!("photo-{}.jpg", photo.id),
+                mime: "image/jpeg".to_string(),
+            })
+        }
+        tl::enums::MessageMedia::Document(media) => {
+            let Some(tl::enums::Document::Document(document)) = &media.document else {
+                return None;
+            };
+            let mut name = None;
+            for attribute in &document.attributes {
+                match attribute {
+                    tl::enums::DocumentAttribute::Filename(file) => {
+                        name = Some(file.file_name.clone());
+                    }
+                    tl::enums::DocumentAttribute::Sticker(_) => return None,
+                    tl::enums::DocumentAttribute::Audio(audio) if audio.voice => return None,
+                    _ => {}
+                }
+            }
+            if media.voice || media.round {
+                return None;
+            }
+            let name = name
+                .filter(|name| !name.trim().is_empty())
+                .unwrap_or_else(|| {
+                    format!("file-{}{}", document.id, extension(&document.mime_type))
+                });
+            Some(MediaFile {
+                location: tl::types::InputDocumentFileLocation {
+                    id: document.id,
+                    access_hash: document.access_hash,
+                    file_reference: document.file_reference.clone(),
+                    thumb_size: String::new(),
+                }
+                .into(),
+                size: document.size,
+                dc_id: document.dc_id,
+                name,
+                mime: document.mime_type.clone(),
+            })
+        }
+        _ => None,
+    }
 }
 
 /// The messages of a history answer, oldest first, with who wrote each. Service messages (joins,
@@ -763,6 +947,7 @@ pub fn messages_from_history(
                     }
                 };
                 let voice = message.media.as_ref().and_then(voice_of);
+                let file = message.media.as_ref().and_then(file_of);
                 let text = match (&message.media, &voice) {
                     (_, Some(voice)) => {
                         let text = crate::transcribe::voice_text(voice.seconds, None);
@@ -779,13 +964,16 @@ pub fn messages_from_history(
                     (None, None) => message.message.clone(),
                 };
                 Some(ReadMessage {
+                    id: message.id,
                     message: ChatMessage {
                         from,
                         from_me: message.out,
                         at: i64::from(message.date) * 1000,
                         text,
+                        attachment: file.as_ref().map(|_| message.id.to_string()),
                     },
                     voice,
+                    file,
                     caption: message.message.clone(),
                 })
             }

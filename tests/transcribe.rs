@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use common::*;
 use grammers_tl_types as tl;
-use messaging_mcp::adapters::telegram::voice_of;
+use messaging_mcp::adapters::telegram::{file_of, voice_of};
 use messaging_mcp::transcribe::{Transcriber, voice_text};
 use serde_json::json;
 
@@ -170,4 +170,83 @@ fn telegram_voice_messages_and_audio_files_are_found_and_other_files_are_not() {
     );
     assert!(voice_of(&document("audio/mpeg", vec![])).is_some());
     assert!(voice_of(&document("application/pdf", vec![])).is_none());
+}
+
+#[test]
+fn telegram_photos_and_files_can_be_saved_but_voice_and_stickers_cannot() {
+    let named = tl::types::DocumentAttributeFilename {
+        file_name: "deck.pdf".to_string(),
+    };
+    let file = file_of(&document("application/pdf", vec![named.into()])).unwrap();
+    assert_eq!(
+        (
+            file.name.as_str(),
+            file.mime.as_str(),
+            file.size,
+            file.dc_id
+        ),
+        ("deck.pdf", "application/pdf", 2048, 4)
+    );
+    assert_eq!(
+        file_of(&document("application/pdf", vec![])).unwrap().name,
+        "file-9.pdf"
+    );
+    let voice = tl::types::DocumentAttributeAudio {
+        voice: true,
+        duration: 3,
+        title: None,
+        performer: None,
+        waveform: None,
+    };
+    assert!(file_of(&document("audio/ogg", vec![voice.into()])).is_none());
+    let sticker = tl::types::DocumentAttributeSticker {
+        mask: false,
+        alt: String::new(),
+        stickerset: tl::types::InputStickerSetEmpty {}.into(),
+        mask_coords: None,
+    };
+    assert!(file_of(&document("image/webp", vec![sticker.into()])).is_none());
+
+    let size = |kind: &str, w: i32, size: i32| -> tl::enums::PhotoSize {
+        tl::types::PhotoSize {
+            r#type: kind.to_string(),
+            w,
+            h: w,
+            size,
+        }
+        .into()
+    };
+    let photo: tl::enums::MessageMedia = tl::types::MessageMediaPhoto {
+        spoiler: false,
+        live_photo: false,
+        photo: Some(
+            tl::types::Photo {
+                has_stickers: false,
+                id: 11,
+                access_hash: 2,
+                file_reference: vec![1],
+                date: 0,
+                sizes: vec![
+                    size("s", 90, 100),
+                    size("y", 1280, 90_000),
+                    size("m", 320, 900),
+                ],
+                video_sizes: None,
+                dc_id: 2,
+            }
+            .into(),
+        ),
+        ttl_seconds: None,
+        video: None,
+    }
+    .into();
+    let file = file_of(&photo).unwrap();
+    assert_eq!(
+        (file.name.as_str(), file.size, file.dc_id),
+        ("photo-11.jpg", 90_000, 2)
+    );
+    let tl::enums::InputFileLocation::InputPhotoFileLocation(location) = file.location else {
+        panic!("a photo location");
+    };
+    assert_eq!(location.thumb_size, "y", "the largest size");
 }

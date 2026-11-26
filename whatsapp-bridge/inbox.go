@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"time"
 
+	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"golang.org/x/text/unicode/norm"
 )
@@ -24,6 +26,10 @@ type Stored struct {
 	FromMe bool   `json:"fromMe"`
 	At     int64  `json:"at"`
 	Text   string `json:"text"`
+	// Attachment is the message ID when it has a photo, video or file to download.
+	Attachment string `json:"attachment,omitempty"`
+	// Media is the encrypted media's keys and location (a waE2E.Message), never the file.
+	Media []byte `json:"-"`
 }
 
 // Inbox keeps the last three days of messages in an owner-only SQLite file.
@@ -51,12 +57,26 @@ func OpenInbox(ctx context.Context, path string) (*Inbox, error) {
 		chat TEXT NOT NULL, id TEXT NOT NULL, sender TEXT NOT NULL, from_me INTEGER NOT NULL,
 		at INTEGER NOT NULL, text TEXT NOT NULL, PRIMARY KEY (chat, id));
 		CREATE INDEX IF NOT EXISTS message_at ON message (at);`)
+	if err == nil {
+		err = addMediaColumn(ctx, db)
+	}
 	if err != nil {
 		db.Close()
 		return nil, err
 	}
 	inbox := &Inbox{db: db, now: time.Now}
 	return inbox, inbox.Prune(ctx)
+}
+
+// addMediaColumn adds the media column to a database made before files could be saved.
+func addMediaColumn(ctx context.Context, db *sql.DB) error {
+	var found int
+	err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM pragma_table_info('message') WHERE name = 'media'").Scan(&found)
+	if err != nil || found > 0 {
+		return err
+	}
+	_, err = db.ExecContext(ctx, "ALTER TABLE message ADD COLUMN media BLOB")
+	return err
 }
 
 // Close closes the database.
@@ -74,8 +94,8 @@ func (in *Inbox) Add(ctx context.Context, m Stored) error {
 		return nil
 	}
 	_, err := in.db.ExecContext(ctx,
-		"INSERT OR IGNORE INTO message (chat, id, sender, from_me, at, text) VALUES (?, ?, ?, ?, ?, ?)",
-		m.Chat, m.ID, m.From, m.FromMe, m.At, m.Text)
+		"INSERT OR IGNORE INTO message (chat, id, sender, from_me, at, text, media) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		m.Chat, m.ID, m.From, m.FromMe, m.At, m.Text, m.Media)
 	if err != nil {
 		return err
 	}
@@ -91,7 +111,7 @@ func (in *Inbox) SetText(ctx context.Context, chat, id, text string) error {
 // Recent returns a chat's last messages, oldest first.
 func (in *Inbox) Recent(ctx context.Context, chat string, limit int) ([]Stored, error) {
 	rows, err := in.db.QueryContext(ctx,
-		"SELECT sender, from_me, at, text FROM message WHERE chat = ? AND at >= ? ORDER BY at DESC LIMIT ?",
+		"SELECT id, sender, from_me, at, text, media IS NOT NULL FROM message WHERE chat = ? AND at >= ? ORDER BY at DESC LIMIT ?",
 		chat, in.now().Add(-retention).UnixMilli(), limit)
 	if err != nil {
 		return nil, err
@@ -100,8 +120,12 @@ func (in *Inbox) Recent(ctx context.Context, chat string, limit int) ([]Stored, 
 	messages := []Stored{}
 	for rows.Next() {
 		var m Stored
-		if err := rows.Scan(&m.From, &m.FromMe, &m.At, &m.Text); err != nil {
+		var media bool
+		if err := rows.Scan(&m.ID, &m.From, &m.FromMe, &m.At, &m.Text, &media); err != nil {
 			return nil, err
+		}
+		if media {
+			m.Attachment = m.ID
 		}
 		messages = append(messages, m)
 	}
@@ -109,6 +133,18 @@ func (in *Inbox) Recent(ctx context.Context, chat string, limit int) ([]Stored, 
 		messages[i], messages[j] = messages[j], messages[i]
 	}
 	return messages, rows.Err()
+}
+
+// Media returns a kept message's media keys, or nil when it has none or is too old.
+func (in *Inbox) Media(ctx context.Context, chat, id string) ([]byte, error) {
+	var media []byte
+	err := in.db.QueryRowContext(ctx,
+		"SELECT media FROM message WHERE chat = ? AND id = ? AND at >= ?",
+		chat, id, in.now().Add(-retention).UnixMilli()).Scan(&media)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return media, err
 }
 
 // Senders returns, per chat, the latest name a sender gave, for finding a chat by name.
@@ -164,6 +200,8 @@ func messageText(m *waE2E.Message) string {
 		return "[location]"
 	case m.GetEphemeralMessage() != nil:
 		return messageText(m.GetEphemeralMessage().GetMessage())
+	case m.GetDocumentWithCaptionMessage() != nil:
+		return messageText(m.GetDocumentWithCaptionMessage().GetMessage())
 	case m.GetViewOnceMessage() != nil:
 		return "[view once]"
 	}
@@ -181,6 +219,72 @@ func voiceText(seconds uint32, transcript *string) string {
 		return label + " (nothing said)"
 	}
 	return label + " " + *transcript
+}
+
+// mediaOf keeps only the photo, video or document of a message, to download it later. Voice
+// messages are transcribed instead, and stickers are left out.
+func mediaOf(m *waE2E.Message) *waE2E.Message {
+	if m == nil {
+		return nil
+	}
+	switch {
+	case m.GetImageMessage() != nil:
+		return &waE2E.Message{ImageMessage: m.GetImageMessage()}
+	case m.GetVideoMessage() != nil:
+		return &waE2E.Message{VideoMessage: m.GetVideoMessage()}
+	case m.GetDocumentMessage() != nil:
+		return &waE2E.Message{DocumentMessage: m.GetDocumentMessage()}
+	case m.GetDocumentWithCaptionMessage() != nil:
+		return mediaOf(m.GetDocumentWithCaptionMessage().GetMessage())
+	case m.GetEphemeralMessage() != nil:
+		return mediaOf(m.GetEphemeralMessage().GetMessage())
+	}
+	return nil
+}
+
+// mediaFile is what the owner gets for a kept media message.
+type mediaFile struct {
+	name string
+	mime string
+	size uint64
+}
+
+// describeMedia names the file in a kept media message: a document keeps its own name, a photo or
+// video gets one from the message ID.
+func describeMedia(m *waE2E.Message, id string) (mediaFile, whatsmeow.DownloadableMessage) {
+	switch {
+	case m.GetImageMessage() != nil:
+		image := m.GetImageMessage()
+		return mediaFile{name: "photo-" + id + extension(image.GetMimetype(), ".jpg"), mime: image.GetMimetype(), size: image.GetFileLength()}, image
+	case m.GetVideoMessage() != nil:
+		video := m.GetVideoMessage()
+		return mediaFile{name: "video-" + id + extension(video.GetMimetype(), ".mp4"), mime: video.GetMimetype(), size: video.GetFileLength()}, video
+	case m.GetDocumentMessage() != nil:
+		document := m.GetDocumentMessage()
+		name := document.GetFileName()
+		if name == "" {
+			name = "file-" + id + extension(document.GetMimetype(), "")
+		}
+		return mediaFile{name: name, mime: document.GetMimetype(), size: document.GetFileLength()}, document
+	}
+	return mediaFile{}, nil
+}
+
+// extension is the usual extension for a MIME type, or fallback.
+func extension(mime, fallback string) string {
+	switch strings.SplitN(mime, ";", 2)[0] {
+	case "image/jpeg":
+		return ".jpg"
+	case "image/png":
+		return ".png"
+	case "image/webp":
+		return ".webp"
+	case "video/mp4":
+		return ".mp4"
+	case "application/pdf":
+		return ".pdf"
+	}
+	return fallback
 }
 
 // fold lowercases and removes accents, so "joao" finds "João".

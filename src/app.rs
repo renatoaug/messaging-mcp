@@ -27,7 +27,10 @@ pub fn create_app(config: Config) -> Result<MessagingService, Error> {
         adapters.telegram = Some(telegram.clone());
         readers.telegram = Some(telegram.clone());
     }
-    let service = MessagingService::new(config, store, adapters).with_readers(readers);
+    let mut service = MessagingService::new(config, store, adapters).with_readers(readers);
+    if let Some(dir) = crate::received::default_dir(&process_env) {
+        service = service.with_downloads(dir);
+    }
     Ok(match telegram {
         Some(telegram) => service.with_directory(telegram),
         None => service,

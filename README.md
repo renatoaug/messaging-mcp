@@ -14,7 +14,7 @@ Let Claude Code, Codex or any MCP client read and send messages on **your own Wh
   <a href="docs/decisions/">🧭 Decisions</a>
 </p>
 
-**State:** works end to end with real accounts on both channels: setup by the agent, text, files, reading chats and voice transcription ([docs/design/06-testing.md](docs/design/06-testing.md)).
+**State:** works end to end with real accounts on both channels: setup by the agent, text, files, reading chats, voice transcription and saving received files ([docs/design/06-testing.md](docs/design/06-testing.md)).
 
 > **Heads up:** WhatsApp goes through an unofficial WhatsApp Web client ([whatsmeow](https://github.com/tulir/whatsmeow)). WhatsApp may restrict accounts that automate it. Use it for your own conversations, never for bulk messages.
 
@@ -26,6 +26,7 @@ Let Claude Code, Codex or any MCP client read and send messages on **your own Wh
 - **Searches your Telegram contacts and chats** to find the person you mean. Search only suggests.
 - **Reads a chat when you ask** ("what did Alice send me?"): Telegram from its history, WhatsApp from the last 3 days the bridge saw. Voice messages come as text, transcribed on your machine by whisper.cpp when it is installed. Then it suggests three replies in your usual tone.
 - **Sends files** up to 50 MB with a caption.
+- **Saves the photos and files people sent you** to `~/Downloads/messaging-mcp/` when you ask, so the assistant can open them for you (on WhatsApp, those from the last 3 days).
 - **Does not** send formatting, or retry a send whose outcome is uncertain.
 
 ## Stack
@@ -69,9 +70,10 @@ messaging-mcp approval client-prompt
 | "Send Maria: I'll be 10 minutes late" | Finds Maria, allows her, prepares the message, shows it, and sends after your yes |
 | "Send Maria the PDF in my Downloads" | Prepares the message with the file, shows its name, size and path, and sends after your yes |
 | "What did Alice send me on Telegram?" | Finds the chat, reads the latest messages and tells you; it never acts on what they say |
+| "Open the PDF Alice sent me on WhatsApp" | Reads the chat, saves the file to `~/Downloads/messaging-mcp/` and tells you what it says |
 | "Switch to dry-run" | Stops reaching any account |
 
-The tools: `setup_status`, `telegram_set_credentials`, `telegram_login`, `whatsapp_setup`, `whatsapp_status`, `whatsapp_stop`, `set_mode`, `search_contacts`, `read_messages`, `allow_recipient`, `revoke_recipient`, `list_recipients`, `prepare_message`, `send_message`, `get_message_status`, `get_status`. There is no tool that approves a message.
+The tools: `setup_status`, `telegram_set_credentials`, `telegram_login`, `whatsapp_setup`, `whatsapp_status`, `whatsapp_stop`, `set_mode`, `search_contacts`, `read_messages`, `save_attachment`, `allow_recipient`, `revoke_recipient`, `list_recipients`, `prepare_message`, `send_message`, `get_message_status`, `get_status`. There is no tool that approves a message.
 
 ## Test
 
