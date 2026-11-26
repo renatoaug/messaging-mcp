@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.0](https://github.com/renatoaug/messaging-mcp/compare/v0.9.0...v0.10.0) (2026-11-26)
+
+### Features
+
+* save photos and files people sent when the owner asks ([#4](https://github.com/renatoaug/messaging-mcp/issues/4)) ([af386dd](https://github.com/renatoaug/messaging-mcp/commit/af386dd2c7ca5ee6bccbb5bb714de429d55c4e4f))
+
 ## [0.9.0](https://github.com/renatoaug/messaging-mcp/compare/v0.8.0...v0.9.0) (2026-11-06)
 
 ### Features
